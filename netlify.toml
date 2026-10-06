@@ -1,0 +1,35 @@
+# Netlify configuration. One site, two front doors, one key.
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# The console (private) and the assistant route (public) both live in functions.
+# Nothing is exposed except what the widget needs to load.
+[[redirects]]
+  from = "/api/seats"
+  to = "/.netlify/functions/seats"
+  status = 200
+
+[[redirects]]
+  from = "/api/chat"
+  to = "/.netlify/functions/chat"
+  status = 200
+
+[[redirects]]
+  from = "/api/transcripts"
+  to = "/.netlify/functions/transcripts"
+  status = 200
+
+[[redirects]]
+  from = "/api/assistant"
+  to = "/.netlify/functions/assistant"
+  status = 200
+
+# Console at the root
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
