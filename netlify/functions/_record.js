@@ -5,7 +5,20 @@
 //   2. adam.store   key: "<YYYY-MM>.md"               -> the compliance record of everything said
 //
 // Backed by Netlify Blobs (built into the platform). No external database, no credentials.
-const { getStore } = require("@netlify/blobs");
+const { getStore, connectLambda } = require("@netlify/blobs");
+
+// The functions run on the classic Lambda runtime, where the Blobs environment context is
+// NOT injected automatically. connectLambda reads it out of the event and hands it to the
+// client. Without this, every store call throws MissingBlobsEnvironmentError.
+// Newer Functions API v2 runtimes inject it themselves; this is a no-op there.
+function initBlobs(event) {
+  try {
+    if (process.env.NETLIFY_BLOBS_CONTEXT) return;
+    if (event && event.blobs) connectLambda(event);
+  } catch (e) {
+    console.error("initBlobs failed", e);
+  }
+}
 
 const SEAT_STORE = "qp-seat-records";
 const ADAM_STORE = "qp-adam-record";
@@ -103,4 +116,4 @@ async function record(seat, userText, replyText) {
   return { seatKey, adamKey };
 }
 
-module.exports = { record, getStore, SEAT_STORE, ADAM_STORE, day, month, stamp, header };
+module.exports = { record, getStore, initBlobs, SEAT_STORE, ADAM_STORE, day, month, stamp, header };
