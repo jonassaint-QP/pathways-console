@@ -3,10 +3,11 @@
 //   GET /api/transcripts?seat=jason&file=..  -> text/markdown, the file itself
 //   GET /api/transcripts?adam=1&file=..      -> text/markdown, the Adam record
 //   GET /api/transcripts?list=adam           -> JSON list of the Adam record files
-const { getStore, SEAT_STORE, ADAM_STORE } = require("./_record.js");
+const { getStore, initBlobs, SEAT_STORE, ADAM_STORE } = require("./_record.js");
 const seats = require("./seats.json");
 
 exports.handler = async (event) => {
+  initBlobs(event);
   const q = event.queryStringParameters || {};
 
   // ---- Adam's record ----
