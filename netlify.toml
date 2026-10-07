@@ -28,6 +28,11 @@
   to = "/.netlify/functions/assistant"
   status = 200
 
+[[redirects]]
+  from = "/api/visual"
+  to = "/.netlify/functions/visual"
+  status = 200
+
 # Console at the root
 [[redirects]]
   from = "/*"
