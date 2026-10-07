@@ -2,7 +2,7 @@
 //
 // PRIVATE. The console. One key, held in the host's environment variables, never in a file.
 const seats = require("./seats.json");
-const { record } = require("./_record.js");
+const { record, initBlobs } = require("./_record.js");
 
 const MODEL = "gemini-2.5-flash";
 const TIMEOUT_MS = 45000;
@@ -10,6 +10,7 @@ const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
 
 exports.handler = async (event) => {
+  initBlobs(event);
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
     return json(503, { error: "no_key", message: "No GEMINI_API_KEY set on the host." });
