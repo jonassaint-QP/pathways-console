@@ -2,11 +2,11 @@
   "name": "pathways-console",
   "version": "1.0.0",
   "private": true,
-  "description": "Pathways Console \u2014 seven seats, one key, on Netlify Functions.",
+  "description": "Pathways Console — seven seats, one key, on Netlify Functions.",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@netlify/blobs": "^8.1.0"
+    "@netlify/blobs": "^11.1.3"
   }
 }
