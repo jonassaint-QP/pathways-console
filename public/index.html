@@ -31,7 +31,7 @@
   .seats{flex:1; overflow-y:auto; padding:8px 0}
   .seat{
     display:flex; align-items:center; gap:11px; width:100%;
-    padding:9px 18px; background:none; border:0; border-left:3px solid transparent;
+    padding:8px 14px; background:none; border:0; border-left:3px solid transparent;
     color:var(--ink); text-align:left; cursor:pointer; font:inherit;
   }
   .seat:hover{background:rgba(203,178,106,.06)}
@@ -42,7 +42,7 @@
     border:1px solid var(--line); background:#0a1206; display:block;
   }
   .seat[aria-current="true"] .face{border-color:var(--gold)}
-  .seat[aria-current="true"] .face{filter:brightness(1.06)}
+  .seat[aria-current="true"] .face{filter:brightness(1.04)}
   .dot{
     width:8px; height:8px; border-radius:50%; flex:0 0 8px; background:#3b4a33;
   }
@@ -67,12 +67,38 @@
   header.top button:hover{color:var(--gold); border-color:var(--gold)}
 
   #log{flex:1; overflow-y:auto; padding:22px; display:flex; flex-direction:column; gap:14px; scroll-behavior:smooth}
-  .msg{max-width:min(760px,86%); border-radius:12px; padding:12px 15px; white-space:pre-wrap; word-wrap:break-word}
+  .msg{width:fit-content; max-width:min(760px,92%); border-radius:12px; padding:14px 18px; word-wrap:break-word; overflow-wrap:anywhere}
+  /* A seat reply reads as a document: the bubble takes the width it needs up to the cap, lines run
+     to the measure, and the label sits with the text rather than floating in the margin. */
+  .msg.seat{width:min(760px,92%)}
+  .msg>*{max-width:100%}
+  .msg p, .msg li{text-wrap:pretty}
+  .msg blockquote{margin:10px 0; padding:4px 0 4px 14px}
+  .msg ul,.msg ol{margin:8px 0 12px; padding-left:22px}
+  .msg h1,.msg h2,.msg h3,.msg h4{text-wrap:balance}
+  .msg.user{white-space:pre-wrap}
+  /* Rendered markdown. The seats write in headings and bold; this is what turns the marks
+     into typography instead of showing them to the reader. */
+  .msg h1,.msg h2,.msg h3,.msg h4{margin:14px 0 6px; line-height:1.25; color:var(--gold); font-weight:600}
+  .msg h1{font-size:18px; letter-spacing:.01em}
+  .msg h2{font-size:16.5px}
+  .msg h3{font-size:15px}
+  .msg h4{font-size:13.5px; color:var(--som); text-transform:none}
+  .msg h1:first-child,.msg h2:first-child,.msg h3:first-child,.msg h4:first-child{margin-top:2px}
+  .msg p{margin:0 0 9px}
+  .msg p:last-child{margin-bottom:0}
+  .msg ul,.msg ol{margin:6px 0 10px; padding-left:20px}
+  .msg li{margin:0 0 4px}
+  .msg blockquote{margin:8px 0; padding:2px 0 2px 12px; border-left:2px solid var(--gold); color:#d8d2c4}
+  .msg hr{border:0; border-top:1px solid var(--line); margin:12px 0}
+  .msg code{font:12px/1.4 "SF Mono",Menlo,Consolas,monospace; background:#131a0f; border:1px solid var(--line); padding:1px 4px; border-radius:3px}
+  .msg strong{font-weight:600; color:#f2eee4}
+  .msg em{font-style:italic}
   .msg.user{align-self:flex-end; background:#22201c; border:1px solid #33302a}
   .msg.seat{align-self:flex-start; background:#0a1206; border:1px solid var(--line)}
   .msg.err{align-self:flex-start; background:#2a1414; border:1px solid #4a2020; color:#e8c8c8}
-  .msg .lbl{display:block; font:600 10.5px/1 Arial,sans-serif; letter-spacing:.1em;
-    text-transform:uppercase; color:var(--dim); margin-bottom:7px}
+  .msg .lbl{display:block; position:static; font:600 10.5px/1 Arial,sans-serif; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--dim); margin:0 0 9px; max-width:100%}
   .empty{margin:auto; text-align:center; color:var(--dim); max-width:520px}
   .empty h2{font:600 20px/1.3 Georgia,serif; color:var(--gold); margin:0 0 10px}
   .empty-logo{display:block; width:172px; height:auto; margin:0 auto 18px; opacity:.95}
@@ -105,7 +131,7 @@
     padding:9px 16px;cursor:pointer;font:400 13px/1.3 inherit}
   #recFiles li button:hover{background:rgba(203,178,106,.07);color:var(--gold)}
   #recFiles li button[aria-current="true"]{color:var(--gold);border-left:3px solid var(--gold)}
-  #recDoc{flex:1; overflow-y:auto; margin:0; padding:20px 24px; white-space:pre-wrap;
+  #recDoc{flex:1; overflow-y:auto; margin:0; padding:20px 24px;
     font:400 13.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--ink)}
   .rec-empty{color:var(--dim); padding:20px 16px; font-size:13px}
   @media (max-width:760px){
@@ -134,7 +160,7 @@
       border-radius:999px; padding:6px 14px 6px 6px; font:500 13px/1 inherit; cursor:pointer;
       display:flex; align-items:center; gap:8px;
     }
-    .switcher .face{width:30px;height:30px;flex:0 0 30px;border-radius:7px}
+    .switcher .face{width:44px;height:44px;flex:0 0 44px;border-radius:8px}
     .switcher button[aria-current="true"]{border-color:var(--som); color:var(--gold)}
     header.top{padding:12px 16px}
     #log{padding:16px 14px}
@@ -274,11 +300,57 @@
         var l = document.createElement("span"); l.className = "lbl"; l.textContent = elWho.textContent;
         d.appendChild(l);
       }
-      d.appendChild(document.createTextNode(m.text));
+      var body = document.createElement("div");
+      paint(body, m.text);
+      d.appendChild(body);
       elLog.appendChild(d);
     });
     elLog.scrollTop = elLog.scrollHeight;
   }
+
+
+  // ---- markdown, rendered rather than shown ----
+  // The seats write headings, bold and lists. This is what makes the marks typography.
+  // Everything is escaped BEFORE any tag is inserted, so a seat cannot inject markup.
+  function esc(s){
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function inl(s){
+    return s
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+  }
+  function md(src){
+    // Structure is detected on the RAW line, then each piece of text is escaped as it is
+    // placed. Escaping first would turn a ">" blockquote into "&gt;" and lose the marker.
+    var lines = String(src).split("\n");
+    var out = [], list = null, para = [];
+    function flushPara(){ if(para.length){ out.push("<p>" + inl(esc(para.join(" "))) + "</p>"); para = []; } }
+    function closeList(){ if(list){ out.push("</" + list + ">"); list = null; } }
+    for(var i = 0; i < lines.length; i++){
+      var t = lines[i].trim(), m;
+      if(!t){ flushPara(); closeList(); continue; }
+      if((m = t.match(/^(#{1,4})\s+(.*)$/))){
+        flushPara(); closeList();
+        out.push("<h" + m[1].length + ">" + inl(esc(m[2])) + "</h" + m[1].length + ">"); continue;
+      }
+      if(/^(-{3,}|\*{3,}|_{3,})$/.test(t)){ flushPara(); closeList(); out.push("<hr>"); continue; }
+      if((m = t.match(/^>\s?(.*)$/))){ flushPara(); closeList(); out.push("<blockquote>" + inl(esc(m[1])) + "</blockquote>"); continue; }
+      if((m = t.match(/^[-*+]\s+(.*)$/))){
+        flushPara(); if(list !== "ul"){ closeList(); out.push("<ul>"); list = "ul"; }
+        out.push("<li>" + inl(esc(m[1])) + "</li>"); continue;
+      }
+      if((m = t.match(/^(\d+)[.)]\s+(.*)$/))){
+        flushPara(); if(list !== "ol"){ closeList(); out.push("<ol>"); list = "ol"; }
+        out.push("<li>" + inl(esc(m[2])) + "</li>"); continue;
+      }
+      closeList(); para.push(t);
+    }
+    flushPara(); closeList();
+    return out.join("");
+  }
+  function paint(el, text){ el.innerHTML = md(text); }
 
   function add(role, text){
     thread().push({ role: role, text: text });
@@ -286,7 +358,8 @@
     var d = document.createElement("div");
     d.className = "msg " + (role === "user" ? "user" : "seat");
     if(role !== "user"){ var l = document.createElement("span"); l.className="lbl"; l.textContent = elWho.textContent; d.appendChild(l); }
-    d.appendChild(document.createTextNode(text));
+    if(role === "user"){ d.appendChild(document.createTextNode(text)); }
+    else { var body = document.createElement("div"); paint(body, text); d.appendChild(body); }
     var empty = elLog.querySelector(".empty"); if(empty) elLog.innerHTML = "";
     elLog.appendChild(d);
     elLog.scrollTop = elLog.scrollHeight;
@@ -380,7 +453,7 @@
       ? "/api/transcripts?adam=1&file=" + encodeURIComponent(file)
       : "/api/transcripts?seat=" + current + "&file=" + encodeURIComponent(file);
     recDoc.textContent = "Loading…";
-    fetch(url).then(function(r){ return r.text(); }).then(function(t){ recDoc.textContent = t; recDoc.scrollTop = 0; });
+    fetch(url).then(function(r){ return r.text(); }).then(function(t){ paint(recDoc, t); recDoc.scrollTop = 0; });
   }
 
   load();
