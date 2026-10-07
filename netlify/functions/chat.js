@@ -4,7 +4,9 @@
 const seats = require("./seats.json");
 const { record, initBlobs } = require("./_record.js");
 
-const MODEL = "gemini-2.5-flash";
+// gemini-2.5-flash and 2.5-pro are no longer available to new users: Google returns
+// 404 "This model models/gemini-2.5-flash is no longer available to new users."
+const MODEL = "gemini-3.8-flash";
 const TIMEOUT_MS = 45000;
 const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
@@ -18,8 +20,9 @@ exports.handler = async (event) => {
 
   // One diagnostic, so a failing key can be named without reading host logs.
   // GET /api/chat?diag=1 -> what this key can actually reach. The key is scrubbed from the reply.
-  if ((event.queryStringParameters || {}).diag) {
-    return await diag(key);
+  const q = event.queryStringParameters || {};
+  if (q.diag) {
+    return await diag(key, q.model && /^[a-z0-9.\-]+$/i.test(q.model) ? q.model : MODEL);
   }
 
   if (event.httpMethod !== "POST") return json(405, { error: "method_not_allowed" });
@@ -64,9 +67,6 @@ exports.handler = async (event) => {
     if (!r.ok) {
       const detail = (await r.text()).slice(0, 800);
       console.error("chat upstream", r.status, detail);
-      // Name the status so a failure can be diagnosed without the host logs. The body is
-      // not returned: it can echo the key back. 403 = key restricted or API disabled,
-      // 400 = key invalid, 404 = model unavailable to this key.
       return json(502, {
         error: "upstream",
         upstream_status: r.status,
@@ -83,7 +83,6 @@ exports.handler = async (event) => {
     if (!reply) return json(502, { error: "empty_reply" });
 
     // Two copies of every exchange: the seat's own record, and Adam's compliance record.
-    // Written server-side so nothing has to be moved by hand. A write failure never blocks the reply.
     let recorded = null;
     try {
       const lastUser = [...contents].reverse().find((c) => c.role === "user");
@@ -102,9 +101,7 @@ exports.handler = async (event) => {
 };
 
 // Ask Google, with the host's own key, what this key is allowed to reach.
-// Two calls: the model list, and the exact call chat makes. Both bodies are returned with the
-// key scrubbed, so the fault is named by Google rather than guessed at.
-async function diag(key) {
+async function diag(key, model) {
   const scrub = (t) => String(t || "").split(key).join("<key>").slice(0, 900);
   const out = { key_present: true, key_length: key.length, key_tail: key.slice(-4) };
 
@@ -127,7 +124,7 @@ async function diag(key) {
 
   try {
     const one = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -136,7 +133,7 @@ async function diag(key) {
     );
     out.model_status = one.status;
     out.model_body = scrub(await one.text());
-    out.model_tried = MODEL;
+    out.model_tried = model;
   } catch (e) {
     out.model_error = scrub(e && e.message);
   }
