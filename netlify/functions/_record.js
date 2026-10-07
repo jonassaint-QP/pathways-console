@@ -10,7 +10,6 @@ const { getStore, connectLambda } = require("@netlify/blobs");
 // The functions run on the classic Lambda runtime, where the Blobs environment context is
 // NOT injected automatically. connectLambda reads it out of the event and hands it to the
 // client. Without this, every store call throws MissingBlobsEnvironmentError.
-// Newer Functions API v2 runtimes inject it themselves; this is a no-op there.
 function initBlobs(event) {
   try {
     if (process.env.NETLIFY_BLOBS_CONTEXT) return;
@@ -75,10 +74,10 @@ async function append(store, key, body, makeHeader) {
 }
 
 async function ensureAdam() {
-  return getStore({ name: ADAM_STORE, consistency: "strong" });
+  return getStore({ name: ADAM_STORE });
 }
 async function ensureSeats() {
-  return getStore({ name: SEAT_STORE, consistency: "strong" });
+  return getStore({ name: SEAT_STORE });
 }
 
 // The one call chat.js makes. Writes both copies.
