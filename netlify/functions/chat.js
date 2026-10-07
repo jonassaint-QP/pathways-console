@@ -15,6 +15,13 @@ exports.handler = async (event) => {
   if (!key) {
     return json(503, { error: "no_key", message: "No GEMINI_API_KEY set on the host." });
   }
+
+  // One diagnostic, so a failing key can be named without reading host logs.
+  // GET /api/chat?diag=1 -> what this key can actually reach. The key is scrubbed from the reply.
+  if ((event.queryStringParameters || {}).diag) {
+    return await diag(key);
+  }
+
   if (event.httpMethod !== "POST") return json(405, { error: "method_not_allowed" });
 
   let body = {};
@@ -93,6 +100,49 @@ exports.handler = async (event) => {
     clearTimeout(timer);
   }
 };
+
+// Ask Google, with the host's own key, what this key is allowed to reach.
+// Two calls: the model list, and the exact call chat makes. Both bodies are returned with the
+// key scrubbed, so the fault is named by Google rather than guessed at.
+async function diag(key) {
+  const scrub = (t) => String(t || "").split(key).join("<key>").slice(0, 900);
+  const out = { key_present: true, key_length: key.length, key_tail: key.slice(-4) };
+
+  try {
+    const list = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+    out.list_status = list.status;
+    const listText = await list.text();
+    out.list_body = scrub(listText);
+    try {
+      const parsed = JSON.parse(listText);
+      if (Array.isArray(parsed.models)) {
+        out.models_visible = parsed.models
+          .map((m) => String(m.name || "").replace("models/", ""))
+          .slice(0, 40);
+      }
+    } catch { /* the raw body above is the finding */ }
+  } catch (e) {
+    out.list_error = scrub(e && e.message);
+  }
+
+  try {
+    const one = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "say ok" }] }] }),
+      }
+    );
+    out.model_status = one.status;
+    out.model_body = scrub(await one.text());
+    out.model_tried = MODEL;
+  } catch (e) {
+    out.model_error = scrub(e && e.message);
+  }
+
+  return json(200, out);
+}
 
 function json(statusCode, obj) {
   return {
