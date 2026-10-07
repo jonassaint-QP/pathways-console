@@ -55,8 +55,21 @@ exports.handler = async (event) => {
       }
     );
     if (!r.ok) {
-      console.error("chat upstream", r.status, (await r.text()).slice(0, 500));
-      return json(502, { error: "upstream", message: "The model call failed." });
+      const detail = (await r.text()).slice(0, 800);
+      console.error("chat upstream", r.status, detail);
+      // Name the status so a failure can be diagnosed without the host logs. The body is
+      // not returned: it can echo the key back. 403 = key restricted or API disabled,
+      // 400 = key invalid, 404 = model unavailable to this key.
+      return json(502, {
+        error: "upstream",
+        upstream_status: r.status,
+        message: "The model call failed.",
+        hint:
+          r.status === 403 ? "The key was refused. Check its application restrictions and that the Generative Language API is enabled."
+          : r.status === 400 ? "The key was rejected as invalid."
+          : r.status === 404 ? "The model is not available to this key."
+          : "See the function log for the body.",
+      });
     }
     const data = await r.json();
     const reply = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
