@@ -12,7 +12,7 @@ exports.handler = async (event) => {
 
   // ---- Adam's record ----
   if (q.list === "adam" || q.adam) {
-    const store = getStore({ name: ADAM_STORE, consistency: "strong" });
+    const store = getStore({ name: ADAM_STORE });
     if (q.file) {
       const body = await readText(store, q.file);
       if (body === null) return json(404, { error: "not_found" });
@@ -29,7 +29,7 @@ exports.handler = async (event) => {
   // ---- a seat's record ----
   const seatId = q.seat;
   if (!seatId || !seats[seatId]) return json(400, { error: "unknown_seat" });
-  const store = getStore({ name: SEAT_STORE, consistency: "strong" });
+  const store = getStore({ name: SEAT_STORE });
 
   if (q.file) {
     const body = await readText(store, `${seatId}/${q.file}`);
