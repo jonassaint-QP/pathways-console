@@ -15,6 +15,7 @@
 // record as a URL, so the two-copy floor covers visuals exactly as it covers text.
 const seats = require("./seats.json");
 const { record, initBlobs } = require("./_record.js");
+const { guard } = require("./_auth.js");
 
 // The estate's image model. gemini-3-pro-image is the highest-fidelity image model this
 // key can reach; the flash variant is the cheaper fallback. Both were confirmed present
@@ -25,6 +26,9 @@ const TIMEOUT_MS = 90000;
 const MAX_PROMPT = 4000;
 
 exports.handler = async (event) => {
+  const denied = guard(event);
+  if (denied) return denied;
+
   initBlobs(event);
   const key = process.env.GEMINI_API_KEY;
   if (!key) return json(503, { error: "no_key", message: "No GEMINI_API_KEY set on the host." });

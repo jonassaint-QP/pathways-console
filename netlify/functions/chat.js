@@ -3,6 +3,7 @@
 // PRIVATE. The console. One key, held in the host's environment variables, never in a file.
 const seats = require("./seats.json");
 const { record, initBlobs } = require("./_record.js");
+const { guard } = require("./_auth.js");
 
 // gemini-2.5-flash and 2.5-pro are no longer available to new users: Google returns
 // 404 "This model models/gemini-2.5-flash is no longer available to new users."
@@ -12,6 +13,9 @@ const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
 
 exports.handler = async (event) => {
+  const denied = guard(event);
+  if (denied) return denied;
+
   initBlobs(event);
   const key = process.env.GEMINI_API_KEY;
   if (!key) {

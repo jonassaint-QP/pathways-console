@@ -4,9 +4,13 @@
 //   GET /api/transcripts?adam=1&file=..      -> text/markdown, the Adam record
 //   GET /api/transcripts?list=adam           -> JSON list of the Adam record files
 const { getStore, initBlobs, SEAT_STORE, ADAM_STORE } = require("./_record.js");
+const { guard } = require("./_auth.js");
 const seats = require("./seats.json");
 
 exports.handler = async (event) => {
+  const denied = guard(event);
+  if (denied) return denied;
+
   initBlobs(event);
   const q = event.queryStringParameters || {};
 

@@ -2,7 +2,11 @@
 // The seat FILE is the seat. Editing the brief means editing the JSON, nothing else.
 const seats = require("./seats.json");
 
-exports.handler = async () => {
+const { guard } = require("./_auth.js");
+exports.handler = async (event) => {
+  const denied = guard(event);
+  if (denied) return denied;
+
   const list = Object.keys(seats).map((id) => ({
     id,
     name: seats[id].name,

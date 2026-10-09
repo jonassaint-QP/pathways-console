@@ -236,8 +236,70 @@
 
   function esc(s){ return s; }
 
+  /* ---------------- console key ----------------
+     The key is typed once, kept in this browser only, and sent as x-console-key. It is
+     never baked into this page: this file is served to anyone who loads it. */
+  var KEY_STORE = "qp-console-key";
+
+  function consoleKey(){
+    try { return localStorage.getItem(KEY_STORE) || ""; } catch(e){ return ""; }
+  }
+
+  function askForKey(msg){
+    return new Promise(function(resolve){
+      var wrap = document.createElement("div");
+      wrap.setAttribute("style",
+        "position:fixed;inset:0;z-index:99;display:flex;align-items:center;justify-content:center;" +
+        "background:rgba(2,5,1,.86);font:inherit");
+      wrap.innerHTML =
+        '<div style="max-width:420px;padding:24px;border:1px solid #CBB26A;border-radius:10px;background:#0b1408">' +
+        '<h2 style="margin:0 0 8px;color:#CBB26A;font-size:16px">Console key</h2>' +
+        '<p style="margin:0 0 14px;line-height:1.5">' + (msg || "Enter the console key to continue.") + '</p>' +
+        '<input id="keygateInput" type="password" autocomplete="current-password" placeholder="x-console-key"' +
+        ' style="width:100%;box-sizing:border-box;padding:10px;margin-bottom:12px;background:#020501;' +
+        'border:1px solid #153009;color:inherit;border-radius:6px;font:inherit">' +
+        '<div style="text-align:right"><button type="button" id="keygateSave"' +
+        ' style="padding:8px 14px;background:#D3B127;border:0;border-radius:6px;font:inherit;cursor:pointer">Unlock</button></div>' +
+        '</div>';
+      document.body.appendChild(wrap);
+      var input = wrap.querySelector("#keygateInput");
+      var save = wrap.querySelector("#keygateSave");
+      function submit(){
+        var v = input.value.trim();
+        if(!v) return;
+        try { localStorage.setItem(KEY_STORE, v); } catch(e){}
+        wrap.remove();
+        resolve(v);
+      }
+      save.addEventListener("click", submit);
+      input.addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); submit(); } });
+      input.focus();
+    });
+  }
+
+  function authHeaders(extra){
+    var h = extra || {};
+    var k = consoleKey();
+    if(k){ h["x-console-key"] = k; }
+    return h;
+  }
+
+  // One retry after a prompt. A second 401 is returned as-is rather than looping.
+  function authed(url, opts){
+    opts = opts || {};
+    opts.headers = authHeaders(opts.headers || {});
+    return fetch(url, opts).then(function(r){
+      if(r.status !== 401){ return r; }
+      return askForKey("That key was not accepted. Enter the console key.").then(function(){
+        opts.headers = authHeaders((opts.headers && opts.headers["content-type"])
+          ? { "content-type": opts.headers["content-type"] } : {});
+        return fetch(url, opts);
+      });
+    });
+  }
+
   function load(){
-    fetch("/api/seats").then(function(r){ return r.json(); }).then(function(d){
+    authed("/api/seats").then(function(r){ return r.json(); }).then(function(d){
       SEATS = d || [];
       if(!SEATS.length){ fail("No seats were returned. The function ran but the seat file was empty."); return; }
       buildNav();
@@ -375,7 +437,7 @@
     pending.className = "msg seat"; pending.textContent = "…";
     elLog.appendChild(pending); elLog.scrollTop = elLog.scrollHeight;
 
-    fetch("/api/chat", {
+    authed("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ seatId: current, messages: thread() })
@@ -426,7 +488,7 @@
   function loadRecords(){
     recFiles.innerHTML = ""; recDoc.textContent = "";
     var url = recMode === "adam" ? "/api/transcripts?list=adam" : "/api/transcripts?seat=" + current;
-    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+    authed(url).then(function(r){ return r.json(); }).then(function(d){
       recTitle.textContent = recMode === "adam" ? "Adam's record — every exchange" : "Record — " + elWho.textContent;
       recSub.textContent = (d.files && d.files.length) ? d.files.length + " file(s)" : "nothing recorded yet";
       if(!d.files || !d.files.length){
@@ -453,7 +515,7 @@
       ? "/api/transcripts?adam=1&file=" + encodeURIComponent(file)
       : "/api/transcripts?seat=" + current + "&file=" + encodeURIComponent(file);
     recDoc.textContent = "Loading…";
-    fetch(url).then(function(r){ return r.text(); }).then(function(t){ paint(recDoc, t); recDoc.scrollTop = 0; });
+    authed(url).then(function(r){ return r.text(); }).then(function(t){ paint(recDoc, t); recDoc.scrollTop = 0; });
   }
 
   load();
