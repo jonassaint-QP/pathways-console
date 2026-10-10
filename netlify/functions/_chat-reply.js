@@ -62,17 +62,22 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
     while (true) {
       let finishReason = null;
       const calls = [];
+      // The model's own parts, kept exactly as received. A Gemini 3 functionCall part carries a
+      // thoughtSignature, and replaying the turn without it is refused. Rebuilding the part from
+      // name and args would drop it, so the raw part is what goes back.
+      const ownParts = [];
 
       for await (const data of modelEvents(res.body)) {
         if (data.error) throw new Error(data.error.message || "The model stream failed.");
         const candidate = data.candidates?.[0];
         for (const part of candidate?.content?.parts || []) {
-          if (part.thought) continue;
+          if (part.thought) continue; // private reasoning, never replayed and never shown
           if (typeof part.text === "string" && part.text) {
             reply += part.text;
             yield line({ type: "delta", text: part.text });
           }
           if (part.functionCall) calls.push(part.functionCall);
+          ownParts.push(part);
         }
         if (candidate?.finishReason) finishReason = candidate.finishReason;
       }
@@ -100,7 +105,7 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
       }
       roundsUsed++;
 
-      contents.push({ role: "model", parts: calls.map((c) => ({ functionCall: { name: c.name, args: c.args || {} } })) });
+      contents.push({ role: "model", parts: ownParts });
 
       const resultParts = [];
       for (const call of calls) {
@@ -122,7 +127,9 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
       contents.push({ role: "user", parts: resultParts });
 
       const next = await callModel(key, MODEL, instruction, contents, folderId, controller);
-      if (!next.ok) throw new Error("The model failed after an action.");
+      if (!next.ok) {
+        throw new Error(`The model failed after an action (${next.status}): ${String(next.detail || "").slice(0, 300)}`);
+      }
       res = next.res;
     }
 
