@@ -1,9 +1,11 @@
-// POST /.netlify/functions/chat  { seatId, messages:[{role,text}] }  ->  { reply }
+// POST /.netlify/functions/chat { seatId, messages:[{role,text}] } -> NDJSON stream
 //
 // PRIVATE. The console. One key, held in the host's environment variables, never in a file.
 const seats = require("./seats.json");
 const { record, initBlobs } = require("./_record.js");
 const { guard } = require("./_auth.js");
+const { stream } = require("@netlify/functions");
+const { Readable } = require("node:stream");
 
 // gemini-2.5-flash and 2.5-pro are no longer available to new users: Google returns
 // 404 "This model models/gemini-2.5-flash is no longer available to new users."
@@ -12,10 +14,12 @@ const TIMEOUT_MS = 45000;
 const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
 
-exports.handler = async (event) => {
+exports.handler = stream(async (event, context) => {
   const denied = guard(event);
   if (denied) return denied;
 
+  // The streaming wrapper awaits the body pipeline; unrelated open sockets need not delay it.
+  context.callbackWaitsForEmptyEventLoop = false;
   initBlobs(event);
   const key = process.env.GEMINI_API_KEY;
   if (!key) {
@@ -56,7 +60,7 @@ exports.handler = async (event) => {
 
   try {
     const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:streamGenerateContent?alt=sse&key=${key}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -64,12 +68,13 @@ exports.handler = async (event) => {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: instruction }] },
           contents,
-          generationConfig: { temperature: 0.6, maxOutputTokens: 4096 },
+          generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
         }),
       }
     );
     if (!r.ok) {
       const detail = (await r.text()).slice(0, 800);
+      clearTimeout(timer);
       console.error("chat upstream", r.status, detail);
       return json(502, {
         error: "upstream",
@@ -82,11 +87,50 @@ exports.handler = async (event) => {
           : "See the function log for the body.",
       });
     }
-    const data = await r.json();
-    const reply = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
-    if (!reply) return json(502, { error: "empty_reply" });
+    if (!r.body) throw new Error("The model returned no response body.");
+    return {
+      statusCode: 200,
+      headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" },
+      body: Readable.from(replyStream(r.body, seat, contents, controller, timer)),
+    };
+  } catch (err) {
+    clearTimeout(timer);
+    const timedOut = err && err.name === "AbortError";
+    console.error("chat failed", timedOut ? "timeout" : err);
+    return json(timedOut ? 504 : 502, {
+      error: timedOut ? "timeout" : "upstream",
+      message: timedOut ? "That took too long." : "Could not read the model response.",
+    });
+  }
+});
 
-    // Two copies of every exchange: the seat's own record, and Adam's compliance record.
+async function* replyStream(body, seat, contents, controller, timer) {
+  let reply = "";
+  let finishReason = null;
+  const line = (value) => JSON.stringify(value) + "\n";
+  try {
+    for await (const data of modelEvents(body)) {
+      if (data.error) throw new Error(data.error.message || "The model stream failed.");
+      const candidate = data.candidates?.[0];
+      const text = (candidate?.content?.parts || [])
+        .filter((p) => !p.thought && typeof p.text === "string")
+        .map((p) => p.text).join("");
+      if (text) {
+        reply += text;
+        yield line({ type: "delta", text });
+      }
+      if (candidate?.finishReason) finishReason = candidate.finishReason;
+    }
+    if (finishReason !== "STOP") {
+      throw new Error(finishReason === "MAX_TOKENS"
+        ? "The answer reached the model's output limit. Try a narrower request."
+        : "The model did not finish its answer.");
+    }
+    reply = reply.trim();
+    if (!reply) throw new Error("The model returned an empty answer.");
+    clearTimeout(timer);
+
+    // Finish both records before emitting the completion event.
     let recorded = null;
     try {
       const lastUser = [...contents].reverse().find((c) => c.role === "user");
@@ -94,15 +138,42 @@ exports.handler = async (event) => {
     } catch (e) {
       console.error("record write failed", e);
     }
-
-    return json(200, { reply, recorded });
+    yield line({ type: "done", reply, recorded });
   } catch (err) {
-    console.error("chat failed", err && err.name === "AbortError" ? "timeout" : err);
-    return json(504, { error: "timeout", message: "That took too long." });
+    console.error("chat stream failed", err);
+    yield line({
+      type: "error",
+      message: err.name === "AbortError" ? "That took too long. The answer is incomplete." : err.message,
+    });
   } finally {
     clearTimeout(timer);
+    controller.abort();
   }
-};
+}
+
+async function* modelEvents(body) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let dataLines = [];
+  for await (const chunk of body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let end;
+    while ((end = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, end).replace(/\r$/, "");
+      buffer = buffer.slice(end + 1);
+      if (!line) {
+        if (dataLines.length) {
+          yield JSON.parse(dataLines.join("\n"));
+          dataLines = [];
+        }
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).replace(/^ /, ""));
+      }
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim() || dataLines.length) throw new Error("The model stream ended mid-event.");
+}
 
 // Ask Google, with the host's own key, what this key is allowed to reach.
 async function diag(key, model) {
