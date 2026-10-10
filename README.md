@@ -14,7 +14,8 @@ Functions on the same site, reading the same `GEMINI_API_KEY`.
 | `public/index.html` | The console. Side rail of seven seats on desktop, seat switcher on mobile. |
 | `public/assistant-widget.js` | The public website widget. **Not switched on.** |
 | `netlify/functions/seats.js` | `GET /api/seats` → the seven seats. |
-| `netlify/functions/chat.js` | `POST /api/chat` → the console. Private. |
+| `netlify/functions/chat.js` | `POST /api/chat` → the console's private NDJSON response stream. |
+| `public/chat-stream.js` | Reads response chunks and requires a final completion event. |
 | `netlify/functions/assistant.js` | `POST /api/assistant` → the public widget. **Inert until switched on.** |
 | `netlify/functions/seats.json` | **The seven seats.** The file is the seat. |
 | `netlify/functions/assistant-brief.js` | The reception brief and its configuration block. |
@@ -74,7 +75,19 @@ either seat or Adam can be viewed and copied out.
 | `GET /api/transcripts?adam=1&file=2026-10.md` | Returns Adam's file as markdown |
 
 **A write failure never blocks a reply.** If the record cannot be written, the answer still comes back and the
-failure is logged — a lost write should not look like a failed conversation.
+failure is logged and shown in the console — a lost write should not look like a failed conversation.
+
+**Console answers stream as they arrive.** The model uses temperature `0.7` and a maximum of `8192` output
+tokens. `/api/chat` emits newline-delimited JSON: `delta` events contain text, `done` contains the full
+`reply` and `recorded` keys, and `error` reports an incomplete answer. HTTP errors before streaming still
+return JSON. Netlify's streaming wrapper awaits the entire response pipeline, including record writes and
+the final event; the Lambda context does not wait for unrelated open sockets. The browser saves an answer
+to the originating seat's in-memory thread only after receiving the final event and a clean end of stream.
+Interrupted or output-limited replies remain visible as incomplete and are not recorded as complete exchanges.
+Streaming remains subject to the deployed site's function execution limits; the model request has a
+45-second application timeout. Netlify's [Lambda streaming documentation](https://docs.netlify.com/build/functions/lambda-compatibility/#response-streaming)
+lists a 10-second streaming limit. The context flag cannot extend a platform timeout; confirm the site's
+effective limit before relying on longer answers. Local checks cannot verify the deployed Netlify proxy's behavior.
 
 **This does NOT apply to the public widget.** `assistant.js` still stores nothing, by design. **The privacy promise
 belongs to the stranger, not to the operator.** The console records because it is private and yours; the widget
@@ -97,7 +110,6 @@ unverified piece, and it is unverified for one reason.**
 
 **Persistence** — threads die with the tab. This is first, because everything else gets tested against history.
 **Handoffs** — no seat can yet write a task another seat reads. This is the routing the console exists for.
-**Streaming** — answers arrive whole.
 **File drop** — hand a seat a document and have it answer from that.
 **Scheduled runs.** **Voice**, last, deliberately.
 

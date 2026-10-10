@@ -216,6 +216,7 @@
   </main>
 </div>
 
+<script src="/chat-stream.js"></script>
 <script>
 (function(){
   "use strict";
@@ -223,6 +224,7 @@
   var current = null;
   var threads = {};          // seatId -> [{role,text}]
   var busy = false;
+  var activeChat = null;
 
   var elSeats = document.getElementById("seatList");
   var elSwitch = document.getElementById("switcher");
@@ -367,6 +369,7 @@
       d.appendChild(body);
       elLog.appendChild(d);
     });
+    if(activeChat && activeChat.seatId === current) elLog.appendChild(activeChat.node);
     elLog.scrollTop = elLog.scrollHeight;
   }
 
@@ -433,30 +436,44 @@
     elInput.value = "";
     add("user", text);
     busy = true; elSend.disabled = true;
+    var seatId = current, messages = thread();
     var pending = document.createElement("div");
-    pending.className = "msg seat"; pending.textContent = "…";
+    pending.className = "msg seat";
+    var label = document.createElement("span");
+    label.className = "lbl"; label.textContent = elWho.textContent;
+    var answer = document.createElement("div"); answer.textContent = "…";
+    pending.appendChild(label); pending.appendChild(answer);
+    activeChat = { seatId: seatId, node: pending };
     elLog.appendChild(pending); elLog.scrollTop = elLog.scrollHeight;
 
     authed("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ seatId: current, messages: thread() })
+      body: JSON.stringify({ seatId: seatId, messages: messages })
     })
-    .then(function(r){ return r.json().catch(function(){ return {}; }); })
+    .then(function(r){
+      return readChatStream(r, function(reply){
+        paint(answer, reply);
+        if(current === seatId) elLog.scrollTop = elLog.scrollHeight;
+      });
+    })
     .then(function(d){
-      if(d && d.reply){
-        pending.remove();
-        add("seat", d.reply);
-      } else {
-        pending.className = "msg err";
-        pending.textContent = (d && d.message) || "That did not come back. Nothing was saved.";
+      messages.push({ role: "model", text: d.reply });
+      paint(answer, d.reply);
+      if(!d.recorded){
+        var warning = document.createElement("div");
+        warning.className = "msg err";
+        warning.textContent = "The answer completed, but its records could not be saved.";
+        pending.appendChild(warning);
       }
     })
-    .catch(function(){
+    .catch(function(err){
       pending.className = "msg err";
-      pending.textContent = "Could not reach the server. Nothing was saved.";
+      var error = document.createElement("div");
+      error.textContent = (err && err.message) || "Could not reach the server. The answer is incomplete.";
+      pending.appendChild(error);
     })
-    .then(function(){ busy = false; elSend.disabled = false; elInput.focus(); });
+    .then(function(){ activeChat = null; busy = false; elSend.disabled = false; elInput.focus(); });
   }
 
   elForm.addEventListener("submit", function(e){ e.preventDefault(); send(); });
