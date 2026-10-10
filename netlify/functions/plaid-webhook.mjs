@@ -1,23 +1,25 @@
 // Plaid webhook receiver — Queer Pathways
-// Verifies the JWT Plaid sends in the Plaid-Verification header, then records the event.
 // Netlify Functions v2. Save at netlify/functions/plaid-webhook.mjs
 //
-// Netlify env vars required:
-//   PLAID_CLIENT_ID  — not secret
-//   PLAID_SECRET     — secret (sandbox value while testing)
-//   PLAID_HOST       — optional. Defaults to sandbox. Set to production.plaid.com only when live.
+// Env vars: PLAID_CLIENT_ID, PLAID_SECRET (secret), PLAID_HOST (optional, defaults to sandbox).
+//
+// Two things make a Plaid webhook unlike any other. All traffic arrives from a single IP, so
+// allowlisting proves nothing and this verification is the only gate. And Plaid's key endpoint
+// returns a JWK, not a PEM: handing that to verify() as a PEM throws ERR_OSSL_UNSUPPORTED.
+// An ES256 JWS signature is raw r||s, so dsaEncoding must be ieee-p1363 (Node's default is DER).
 
-import { verify, createHash } from "node:crypto";
+import { verify, createHash, createPublicKey } from "node:crypto";
 
 const MAX_BODY_BYTES = 200 * 1024;
 const MAX_IAT_SKEW_MS = 5 * 60 * 1000;
 
-// Sandbox credentials are rejected by the production host, so this must follow the environment.
+// Sandbox credentials are rejected by the production host, so this follows the environment.
+// Accepts either "sandbox.plaid.com" or a full "https://sandbox.plaid.com".
 const PLAID_HOST = process.env.PLAID_HOST || "sandbox.plaid.com";
+const PLAID_BASE = /^https?:\/\//.test(PLAID_HOST) ? PLAID_HOST.replace(/\/$/, "") : `https://${PLAID_HOST}`;
+const EVENT_STORE = "qp-plaid-events";
 
-function b64urlToBuffer(s) {
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-}
+const b64urlToBuffer = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
 function decodeJwt(token) {
   const [h, p, sig] = token.split(".");
@@ -29,13 +31,12 @@ function decodeJwt(token) {
   };
 }
 
-// Plaid returns the verification key as a raw base64 DER blob. crypto.verify needs a PEM,
-// so it has to be wrapped in BEGIN/END lines before use. Fetched per kid, cached in memory.
+// Fetched per kid and cached as KeyObjects.
 const keyCache = new Map();
-async function pemFor(kid) {
+async function keyFor(kid) {
   if (keyCache.has(kid)) return keyCache.get(kid);
 
-  const res = await fetch(`https://${PLAID_HOST}/webhook_verification_key/get`, {
+  const res = await fetch(`${PLAID_BASE}/webhook_verification_key/get`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -46,11 +47,43 @@ async function pemFor(kid) {
   });
 
   const body = await res.json();
-  if (!body.key) throw new Error(`no verification key for kid ${kid}: ${JSON.stringify(body)}`);
+  if (!body.key) throw new Error(`no verification key for kid ${kid}`);
 
-  const pem = `-----BEGIN PUBLIC KEY-----\n${body.key}\n-----END PUBLIC KEY-----`;
-  keyCache.set(kid, pem);
-  return pem;
+  // body.key is a JWK (kty/x/y/crv) for ES256. createPublicKey consumes it directly.
+  const key = createPublicKey({ key: body.key, format: "jwk" });
+  keyCache.set(kid, key);
+  return key;
+}
+
+// Record the verified event to the platform's own store, and to a daily digest.
+// This lane reads money; it never moves it, so nothing here acts on the event.
+async function record(event) {
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore(EVENT_STORE);
+    const at = new Date().toISOString();
+    const slug = `${at}-${event.webhook_code || "unknown"}`.replace(/[:.]/g, "-");
+
+    await store.set(
+      `events/${slug}.json`,
+      JSON.stringify({ at, received: true, event }, null, 2)
+    );
+
+    const day = at.slice(0, 10);
+    const line = `- ${at} | ${event.webhook_type}/${event.webhook_code} | item: ${event.item_id || "n/a"}\n`;
+    let prev = "";
+    try {
+      const got = await store.get(`digest/${day}.md`);
+      if (got) prev = typeof got === "string" ? got : await got.text();
+    } catch { /* first write of the day */ }
+    await store.set(`digest/${day}.md`, prev + line);
+
+    return slug;
+  } catch (e) {
+    // A store failure must never turn a verified webhook into an error response.
+    console.warn("event not recorded:", e && e.message);
+    return null;
+  }
 }
 
 export default async (req) => {
@@ -64,14 +97,14 @@ export default async (req) => {
 
   const { header, payload, signingInput, signature } = decodeJwt(token);
 
-  // 1. Freshness. Reject anything older than five minutes.
+  // 1. Freshness. Plaid's JWS carries iat; anything older than five minutes is refused.
   if (Math.abs(Date.now() - payload.iat * 1000) > MAX_IAT_SKEW_MS) {
     return new Response("stale webhook", { status: 400 });
   }
 
   // 2. Signature, against the key Plaid names in the kid claim.
-  const pem = await pemFor(header.kid);
-  const ok = verify("sha256", Buffer.from(signingInput), pem, signature);
+  const key = await keyFor(header.kid);
+  const ok = verify("sha256", Buffer.from(signingInput), { key, dsaEncoding: "ieee-p1363" }, signature);
   if (!ok) return new Response("bad signature", { status: 400 });
 
   // 3. Body hash. Proves the payload was not altered in transit.
@@ -80,10 +113,12 @@ export default async (req) => {
     return new Response("body hash mismatch", { status: 400 });
   }
 
-  // Verified. Record the event. Never act on it here: this lane reads money, it never moves it.
   const event = JSON.parse(raw);
+  const slug = await record(event);
   console.log(JSON.stringify({
     at: new Date().toISOString(),
+    verified: true,
+    recorded: slug,
     type: event.webhook_type,
     code: event.webhook_code,
     item: event.item_id,
@@ -93,25 +128,26 @@ export default async (req) => {
 };
 
 /* ------------------------------------------------------------------
-   The sandbox test, once deployed.
-   Replace <site> and use a SANDBOX access token throughout.
+   The sandbox test, once deployed. Use a SANDBOX access token throughout.
 
-   1. Make a sandbox item:
-      POST https://sandbox.plaid.com/sandbox/public_token/create
+   1. Make a sandbox item:  POST https://sandbox.plaid.com/sandbox/public_token/create
       { "client_id": ..., "secret": ..., "institution_id": "ins_109508",
         "initial_products": ["transactions"] }
-      then POST /item/public_token/exchange with that public_token.
+      then POST /item/public_token/exchange with the returned public_token.
 
-   2. Point the item at this endpoint (no trailing slash):
+   2. Point the item here, no trailing slash:
       POST https://sandbox.plaid.com/item/webhook/update
-      { "client_id": ..., "secret": ..., "access_token": "access-sandbox-...",
-        "webhook": "https://<site>/.netlify/functions/plaid-webhook" }
+      { ..., "access_token": "access-sandbox-...",
+        "webhook": "https://queerpathways.info/.netlify/functions/plaid-webhook" }
 
-   3. Fire the webhook you asked for:
+   3. Fire it:
       POST https://sandbox.plaid.com/sandbox/item/fire_webhook
-      { "client_id": ..., "secret": ..., "access_token": "access-sandbox-...",
-        "webhook_type": "ITEM", "webhook_code": "NEW_ACCOUNTS_AVAILABLE" }
+      { ..., "access_token": "access-sandbox-...",
+        "webhook_type": "TRANSACTIONS", "webhook_code": "DEFAULT_UPDATE" }
 
-   4. Confirm in the Netlify function log: the event JSON, then a 200.
-      If it returns 401, the CONSOLE_KEY route gate is still catching this path.
+      ITEM / NEW_ACCOUNTS_AVAILABLE returns SANDBOX_ACCOUNT_SELECT_V2_NOT_ENABLED on a default
+      sandbox item: that webhook only exists on items made through Account Select v2.
+
+   4. Confirm: a 200 in the function log, and a digest line under digest/<date>.md in the
+      qp-plaid-events store.
    ------------------------------------------------------------------ */
