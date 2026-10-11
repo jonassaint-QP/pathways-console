@@ -1,4 +1,4 @@
-// Google Drive access for the seats, as the estate service account.
+// Google Drive access for the seats, delegated to the estate's Workspace user.
 //
 // The seats can talk but cannot reach a folder. This module is the read and write path they
 // use: list a folder, read a document, create a document, file it.
@@ -78,6 +78,7 @@ async function accessToken() {
   const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claim = b64url(JSON.stringify({
     iss: key.client_email,
+    sub: "jonassaint@queerpathways.org",
     scope: SCOPE,
     aud: TOKEN_URL,
     iat: now,
@@ -171,15 +172,16 @@ async function readFile(fileId) {
   return { id: info.id, name: info.name, mimeType: info.mimeType, base64: buf.toString("base64"), encoding: "base64" };
 }
 
-// A document written by a seat. Created as a Google Doc, then filed by the caller.
-async function createDoc(title, text) {
+// Create inside the target folder, never in the service account's root.
+async function createDoc(title, text, folderId = process.env.GOOGLE_DRIVE_FOLDER_ID) {
   const name = String(title == null ? "" : title).trim();
   if (!name) throw new Error("A title is required to create a document.");
+  const parent = id(folderId, "folder");
 
   const created = await call(`${API}/files?fields=id,webViewLink&supportsAllDrives=true`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, mimeType: DOC }),
+    body: JSON.stringify({ name, mimeType: DOC, parents: [parent] }),
   });
 
   await call(`${UPLOAD}/files/${created.id}?uploadType=media&supportsAllDrives=true`, {

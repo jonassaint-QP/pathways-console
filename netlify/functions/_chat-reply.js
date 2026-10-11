@@ -3,8 +3,7 @@
 // Split out of chat.js so each file stays small enough to commit whole. A truncated commit
 // of this file would silently remove half the pipeline, which is exactly what happened once.
 //
-// folderId is bound by the operator. The model is never told the id and cannot name one: only
-// the folder the request carried is reachable, and _seat-tools refuses anything outside it.
+// Drive is scoped to the operator-bound folder. GitHub is scoped to Robert's four repos.
 
 const seatTools = require("./_seat-tools");
 
@@ -26,14 +25,26 @@ const FOLDER_NOTE = [
   "and do not construct figures by inference.",
 ].join("\n");
 
-async function callModel(key, model, instruction, contents, folderId, controller) {
+const GITHUB_NOTE = [
+  "YOUR GITHUB ACTIONS.",
+  "You can read files and directories, create working branches, commit file creates or updates,",
+  "and open pull requests in jonassaint-QP/pathways-console, QP-Store, QP-Clinical and QueerPathways.",
+  "Use github_get_file, github_create_branch, github_write_file and github_open_pull_request.",
+  "Read the current file from the branch you will update and pass its SHA to avoid overwriting",
+  "concurrent changes. Create a working branch before writing and open a pull request for review.",
+  "These actions do not merge or deploy. Report the returned artifact and never claim it is live.",
+  "GitHub actions do not need a Drive folder. If the token is missing or refused, say so and stop.",
+].join("\n");
+
+async function callModel(key, model, instruction, contents, folderId, controller, seat) {
   const payload = {
     systemInstruction: { parts: [{ text: instruction }] },
     contents,
     generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
   };
-  if (folderId) {
-    payload.tools = [{ functionDeclarations: seatTools.DECLARATIONS }];
+  const declarations = seatTools.declarations(seat, folderId);
+  if (declarations.length) {
+    payload.tools = [{ functionDeclarations: declarations }];
     payload.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
   }
 
@@ -92,16 +103,8 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
         break;
       }
 
-      // A call can only arrive when a folder was bound. If one arrives anyway, nothing is
-      // executed and the model is told so: no folder, no actions, no exceptions.
-      if (!folderId) {
-        yield line({ type: "tool", name: calls[0].name, ok: false, detail: "no folder was given to this run" });
-        break;
-      }
-
       if (roundsUsed >= MAX_TOOL_ROUNDS) {
-        yield line({ type: "tool", name: calls[0].name, ok: false, detail: "action limit reached" });
-        break;
+        throw new Error("The action limit was reached before the run completed.");
       }
       roundsUsed++;
 
@@ -111,8 +114,9 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
       for (const call of calls) {
         let result;
         try {
-          result = await seatTools.execute(folderId, call.name, call.args);
+          result = await seatTools.executeForSeat(seat, folderId, call.name, call.args, controller.signal);
         } catch (e) {
+          console.error("seat action failed", call.name, e && e.message);
           result = { error: (e && e.message) || "the action failed." };
         }
         rounds.push({ name: call.name, args: call.args || {}, result });
@@ -126,7 +130,7 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
       }
       contents.push({ role: "user", parts: resultParts });
 
-      const next = await callModel(key, MODEL, instruction, contents, folderId, controller);
+      const next = await callModel(key, MODEL, instruction, contents, folderId, controller, seat);
       if (!next.ok) {
         throw new Error(`The model failed after an action (${next.status}): ${String(next.detail || "").slice(0, 300)}`);
       }
@@ -134,8 +138,12 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
     }
 
     reply = reply.trim();
-    // A run that filed a document and said nothing is a completed run, not an empty one.
-    if (!reply && rounds.length) reply = "Done. The document is filed in the folder.";
+    if (!reply && rounds.length) {
+      reply = rounds.some((round) => round.result.error)
+        ? "The run ended with action errors. Review the action results."
+        : "The actions completed. Review their returned artifacts.";
+      yield line({ type: "delta", text: reply });
+    }
     if (!reply) throw new Error("The model returned an empty answer.");
     clearTimeout(timer);
 
@@ -229,4 +237,4 @@ async function diag(key, model) {
   return json(200, out);
 }
 
-module.exports = { FOLDER_NOTE, MODEL, callModel, replyStream, json, diag };
+module.exports = { FOLDER_NOTE, GITHUB_NOTE, MODEL, callModel, replyStream, json, diag };

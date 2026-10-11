@@ -74,8 +74,8 @@ exports.handler = async (event) => {
     }
 
     if (action === "create") {
-      const doc = await drive.createDoc(input.title, input.text);
-      return out(200, { ok: true, action, document: doc, filed: false });
+      const doc = await drive.createDoc(input.title, input.text, folderId);
+      return out(200, { ok: true, action, document: doc, filed: true });
     }
 
     if (action === "file") {
@@ -86,10 +86,8 @@ exports.handler = async (event) => {
     }
 
     if (action === "collect") {
-      // create then file, in one call, so a run can be driven in a single step.
-      const doc = await drive.createDoc(input.title, input.text);
-      const moved = await drive.fileInto(doc.id, folderId);
-      return out(200, { ok: true, action, document: { ...doc, ...moved }, filed: true });
+      const doc = await drive.createDoc(input.title, input.text, folderId);
+      return out(200, { ok: true, action, document: doc, filed: true });
     }
 
     return fail(400, "unknown_action", `action must be list, read, create, file or collect. Got "${action}".`);
