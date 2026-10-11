@@ -2,6 +2,15 @@ const { Octokit } = require("@octokit/rest");
 
 const OWNER = "jonassaint-QP";
 const REPOS = ["pathways-console", "QP-Store", "QP-Clinical", "QueerPathways"];
+const ALLOWED_URL_HOSTS = [
+  "queerpathways.com",
+  "www.queerpathways.com",
+  "queerpathways.org",
+  "www.queerpathways.org",
+  "queerpathways.info",
+  "www.queerpathways.info",
+];
+
 const repoProperty = { type: "string", enum: REPOS, description: `Repository under ${OWNER}.` };
 const branchProperty = { type: "string", description: "An existing branch name, not a commit SHA." };
 
@@ -74,22 +83,35 @@ const DECLARATIONS = [
       type: "object",
       properties: {
         repo: repoProperty,
+        branch: branchProperty,
+        limit: { type: "integer", description: "Number of commits to return (1-30). Defaults to 10." },
         sha: { type: "string", description: "Branch name or commit SHA to inspect; defaults to the default branch." },
-        limit: { type: "number", description: "Number of commits to return (max 30); defaults to 10." },
       },
       required: ["repo"],
     },
   },
   {
     name: "github_get_tree",
-    description: "Get the recursive file tree of a repository branch to understand project structure.",
+    description: "Get the recursive file tree of a branch or commit in one of Robert's four repositories.",
     parameters: {
       type: "object",
       properties: {
         repo: repoProperty,
+        ref: { type: "string", description: "Branch name or commit SHA. Defaults to the default branch." },
         tree_sha: { type: "string", description: "Branch name or commit SHA to inspect; defaults to default branch." },
       },
       required: ["repo"],
+    },
+  },
+  {
+    name: "probe_url",
+    description: "Probe a live Queer Pathways web surface (queerpathways.com, queerpathways.org, queerpathways.info) to verify HTTP status, canonical tags, and running artifact.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL to inspect, scoped to queerpathways domains." },
+      },
+      required: ["url"],
     },
   },
 ];
@@ -119,9 +141,51 @@ function branch(value, name) {
   return ref;
 }
 
+async function probeUrl(targetUrl, signal) {
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    throw new Error("Invalid URL provided to probe_url.");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("Only http/https protocols are allowed.");
+  }
+  if (!ALLOWED_URL_HOSTS.includes(parsed.hostname.toLowerCase())) {
+    throw new Error(`Host ${parsed.hostname} is outside estate surfaces (${ALLOWED_URL_HOSTS.join(", ")}).`);
+  }
+
+  const response = await fetch(parsed.toString(), {
+    method: "GET",
+    headers: { "User-Agent": "QueerPathways-IT-Probe/1.0" },
+    redirect: "follow",
+    signal,
+  });
+
+  const bodyText = await response.text();
+  const canonicalMatch = bodyText.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i);
+  const titleMatch = bodyText.match(/<title>([^<]+)<\/title>/i);
+
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    finalUrl: response.url,
+    redirected: response.redirected,
+    contentType: response.headers.get("content-type"),
+    title: titleMatch ? titleMatch[1].trim() : null,
+    canonical: canonicalMatch ? canonicalMatch[1].trim() : null,
+    contentLength: bodyText.length,
+  };
+}
+
 async function execute(name, args, signal) {
   if (!DECLARATIONS.some((tool) => tool.name === name)) throw new Error(`Unknown GitHub action: ${name}.`);
   const a = args && typeof args === "object" ? args : {};
+
+  if (name === "probe_url") {
+    return await probeUrl(required(a.url, "url"), signal);
+  }
+
   if (!REPOS.includes(a.repo)) throw new Error("That repository is outside Robert's four-repository scope.");
   const token = process.env.ROBERT_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) throw new Error("ROBERT_GITHUB_TOKEN or GITHUB_TOKEN is not set on the host. Robert cannot reach GitHub.");
@@ -191,6 +255,7 @@ async function execute(name, args, signal) {
         head: pr.head.ref,
         base: pr.base.ref,
         draft: pr.draft,
+        url: pr.html_url,
         html_url: pr.html_url,
         created_at: pr.created_at,
         merged_at: pr.merged_at,
@@ -199,16 +264,18 @@ async function execute(name, args, signal) {
   }
 
   if (name === "github_list_commits") {
+    const ref = a.branch ? branch(a.branch, "branch") : a.sha ? required(a.sha, "sha") : await defaultBranch();
     const per_page = Math.min(Math.max(Number(a.limit) || 10, 1), 30);
     const { data } = await octokit.repos.listCommits({
       ...common,
-      ...(a.sha ? { sha: String(a.sha) } : {}),
+      sha: ref,
       per_page,
     });
     return {
       commits: data.map((c) => ({
-        sha: c.sha,
-        message: c.commit.message,
+        sha: c.sha.substring(0, 7),
+        full_sha: c.sha,
+        message: c.commit.message.split("\n")[0],
         author: c.commit.author?.name,
         date: c.commit.author?.date,
         url: c.html_url,
@@ -217,18 +284,20 @@ async function execute(name, args, signal) {
   }
 
   if (name === "github_get_tree") {
-    const tree_sha = a.tree_sha ? String(a.tree_sha) : await defaultBranch();
+    const ref = a.ref ? required(a.ref, "ref") : a.tree_sha ? required(a.tree_sha, "tree_sha") : await defaultBranch();
     const { data } = await octokit.git.getTree({
       ...common,
-      tree_sha,
+      tree_sha: ref,
       recursive: "true",
     });
     return {
       sha: data.sha,
       truncated: data.truncated,
-      tree: data.tree.map((item) => ({ path: item.path, mode: item.mode, type: item.type, size: item.size })),
+      tree: data.tree.map((item) => ({ path: item.path, sha: item.sha, mode: item.mode, type: item.type, size: item.size })),
     };
   }
+
+  throw new Error(`Unhandled action: ${name}`);
 }
 
 module.exports = { DECLARATIONS, execute, REPOS };
