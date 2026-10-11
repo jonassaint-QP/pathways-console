@@ -1,7 +1,14 @@
 const { Octokit } = require("@octokit/rest");
 
 const OWNER = "jonassaint-QP";
-const REPOS = ["pathways-console", "QP-Store", "QP-Clinical", "QueerPathways"];
+const REPOS = [
+  "pathways-console",
+  "QP-Store",
+  "QP-Clinical",
+  "QueerPathways",
+  "QP-Backroom-v2",
+  "QP-Backroom-Retired",
+];
 const ALLOWED_URL_HOSTS = [
   "queerpathways.com",
   "www.queerpathways.com",
@@ -17,7 +24,7 @@ const branchProperty = { type: "string", description: "An existing branch name, 
 const DECLARATIONS = [
   {
     name: "github_get_file",
-    description: "Read a UTF-8 file or list a directory in one of Robert's four repositories. Returns the file SHA needed for an update.",
+    description: "Read a UTF-8 file or list a directory in one of Robert's managed repositories. Returns the file SHA needed for an update.",
     parameters: {
       type: "object",
       properties: {
@@ -66,7 +73,7 @@ const DECLARATIONS = [
   },
   {
     name: "github_list_pull_requests",
-    description: "List open, closed or all pull requests in one of Robert's four repositories.",
+    description: "List open, closed or all pull requests in one of Robert's managed repositories.",
     parameters: {
       type: "object",
       properties: {
@@ -78,7 +85,7 @@ const DECLARATIONS = [
   },
   {
     name: "github_list_commits",
-    description: "List recent commits on a branch in one of Robert's four repositories.",
+    description: "List recent commits on a branch in one of Robert's managed repositories.",
     parameters: {
       type: "object",
       properties: {
@@ -92,7 +99,7 @@ const DECLARATIONS = [
   },
   {
     name: "github_get_tree",
-    description: "Get the recursive file tree of a branch or commit in one of Robert's four repositories.",
+    description: "Get the recursive file tree of a branch or commit in one of Robert's managed repositories.",
     parameters: {
       type: "object",
       properties: {
@@ -186,7 +193,7 @@ async function execute(name, args, signal) {
     return await probeUrl(required(a.url, "url"), signal);
   }
 
-  if (!REPOS.includes(a.repo)) throw new Error("That repository is outside Robert's four-repository scope.");
+  if (!REPOS.includes(a.repo)) throw new Error("That repository is outside Robert's repository scope.");
   const token = process.env.ROBERT_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
   if (!token) throw new Error("ROBERT_GITHUB_TOKEN or GITHUB_TOKEN is not set on the host. Robert cannot reach GitHub.");
   const octokit = new Octokit({ auth: token, request: { timeout: 15000 } });
