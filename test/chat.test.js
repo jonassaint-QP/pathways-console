@@ -18,7 +18,11 @@ function loadChat(options = {}) {
     exports: {},
     require: (name) => {
       if (name === "@netlify/functions") return { stream };
-      if (name === "./seats.json") return { jason: { id: "jason", instructions: "Be helpful." } };
+      if (name === "./seats.json") return {
+        jason: { id: "jason", instructions: "Be helpful." },
+        robert: { id: "robert", instructions: "Build." },
+      };
+      if (name === "./_chat-reply.js") return pipeline;
       if (name === "./_auth.js") return { guard: () => options.denied || null };
       if (name === "./_record.js") return {
         initBlobs: () => {},
@@ -36,9 +40,23 @@ function loadChat(options = {}) {
     fetch: async (url, init) => {
       calls.push({ url, init });
       if (options.fetchError) throw options.fetchError;
+      if (Array.isArray(options.upstream)) return options.upstream[calls.length - 1];
       return options.upstream;
     },
   };
+  const tools = require("../netlify/functions/_seat-tools");
+  const pipelineContext = {
+    ...context, module: { exports: {} },
+    require: (name) => name === "./_seat-tools" ? {
+      declarations: tools.declarations,
+      executeForSeat: async (...args) => {
+        if (options.execute) return options.execute(...args);
+        throw new Error("Unexpected action.");
+      },
+    } : require(name),
+  };
+  vm.runInNewContext(fs.readFileSync(require.resolve("../netlify/functions/_chat-reply.js"), "utf8"), pipelineContext);
+  const pipeline = pipelineContext.module.exports;
   vm.runInNewContext(source, context);
   return { handler: context.exports.handler, calls, records, logs };
 }
@@ -61,14 +79,14 @@ function response(text, size = 1) {
   }));
 }
 
-async function run(chat) {
+async function run(chat, body = {}) {
   const output = new PassThrough();
   const chunks = [];
   output.on("data", (chunk) => chunks.push(chunk));
   const context = {};
   await chat.handler({
     httpMethod: "POST",
-    body: JSON.stringify({ seatId: "jason", messages: [{ role: "user", text: "Hello" }] }),
+    body: JSON.stringify({ seatId: "jason", messages: [{ role: "user", text: "Hello" }], ...body }),
   }, output, context);
   return { text: Buffer.concat(chunks).toString(), metadata: output.metadata, context };
 }
@@ -124,13 +142,50 @@ test("auth denial and upstream failure remain JSON HTTP errors", async () => {
 });
 
 test("incomplete, malformed and output-limited model streams never record or complete", async () => {
-  for (const text of [sse(["Partial"], "MAX_TOKENS"), sse(["Partial"], null), "data: {bad}\n\n", 'data: {"candidates":[]}']) {
+  for (const text of [sse(["Partial"], "MAX_TOKENS"), sse(["Partial"], "SAFETY"), "data: {bad}\n\n", 'data: {"candidates":[]}']) {
     const chat = loadChat({ upstream: response(text) });
     const result = await run(chat);
     const events = result.text.trim().split("\n").map(JSON.parse);
     assert.equal(events.at(-1).type, "error");
     assert.equal(chat.records.length, 0);
     assert.ok(chat.logs.length);
+  }
+});
+
+test("Robert gets GitHub tools without a folder and tool rounds preserve thought signatures", async () => {
+  const toolPart = {
+    functionCall: { name: "github_get_file", args: { repo: "QP-Store", path: "package.json" } },
+    thoughtSignature: "synthetic-signature",
+  };
+  const first = "data: " + JSON.stringify({
+    candidates: [{ content: { parts: [toolPart] }, finishReason: "STOP" }],
+  }) + "\n\n";
+  const executed = [];
+  const chat = loadChat({
+    upstream: [response(first), response(sse(["Read the file."]))],
+    execute: async (...args) => { executed.push(args); return { content: "{}" }; },
+  });
+  const result = await run(chat, { seatId: "robert" });
+  assert.match(result.text, /"type":"tool","name":"github_get_file","ok":true/);
+  const payloads = chat.calls.map((call) => JSON.parse(call.init.body));
+  for (const payload of payloads) {
+    assert.deepEqual(payload.tools[0].functionDeclarations.map((tool) => tool.name),
+      ["github_get_file", "github_create_branch", "github_write_file", "github_open_pull_request"]);
+  }
+  assert.deepEqual(payloads[1].contents[1].parts[0], toolPart);
+  assert.equal(executed[0][0].id, "robert");
+  assert.equal(executed[0][1], "");
+});
+
+test("folder tools and GitHub tools are composed only for the appropriate seat", async () => {
+  for (const [seatId, folderId, count] of [
+    ["jason", "", 0], ["jason", "folder123", 4],
+    ["robert", "", 4], ["robert", "folder123", 8],
+  ]) {
+    const chat = loadChat({ upstream: response(sse(["Hello"])) });
+    await run(chat, { seatId, folderId });
+    const payload = JSON.parse(chat.calls[0].init.body);
+    assert.equal(payload.tools?.[0].functionDeclarations.length || 0, count);
   }
 });
 

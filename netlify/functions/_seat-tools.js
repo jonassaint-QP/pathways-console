@@ -2,10 +2,9 @@
 //
 // A seat's reply used to be text only, so it could never collect a source document, never
 // write a document, and never file one. This module is the missing half: four callable
-// actions, the same four that finance-run exposes, plus the declarations that tell the model
-// they exist.
+// Drive actions, the same four that finance-run exposes, plus Robert's repository actions.
 //
-// The folder is bound by the operator, not by the model. The model is never given the folder
+// For Drive, the folder is bound by the operator, not by the model. The model is never given the folder
 // id and cannot name one: every action here is scoped to the folder the request carried, and
 // every target is checked against it before anything happens. So a seat cannot walk the
 // estate even if it asks to.
@@ -13,6 +12,7 @@
 // No delete, no share, no permission change, no folder creation. Absent on purpose.
 
 const drive = require("./_drive");
+const github = require("./_github");
 
 const DECLARATIONS = [
   {
@@ -34,7 +34,7 @@ const DECLARATIONS = [
   {
     name: "create_document",
     description:
-      "Create a document from text you supply. It is created outside the folder; call file_document to place it.",
+      "Create a document from text you supply directly in the folder you were given.",
     parameters: {
       type: "object",
       properties: {
@@ -59,6 +59,7 @@ const DECLARATIONS = [
 // One call from the model, executed against one folder, and nothing else.
 async function execute(folderId, name, args) {
   const a = args && typeof args === "object" ? args : {};
+  if (!folderId) throw new Error("A Drive folder must be bound before using Drive actions.");
 
   if (name === "list_folder") {
     const files = await drive.listFolder(folderId);
@@ -83,8 +84,8 @@ async function execute(folderId, name, args) {
     const text = String(a.text == null ? "" : a.text);
     if (!title) return { error: "title is required." };
     if (!text.trim()) return { error: "text is required. An empty document is not a deliverable." };
-    const doc = await drive.createDoc(title, text);
-    return { id: doc.id, url: doc.url, note: "Created. Call file_document with this id to file it." };
+    const doc = await drive.createDoc(title, text, folderId);
+    return { id: doc.id, url: doc.url, filed_in: folderId };
   }
 
   if (name === "file_document") {
@@ -97,4 +98,21 @@ async function execute(folderId, name, args) {
   return { error: `There is no action called ${name}.` };
 }
 
-module.exports = { DECLARATIONS, execute };
+function declarations(seat, folderId) {
+  return [
+    ...(folderId ? DECLARATIONS : []),
+    ...(seat?.id === "robert" ? github.DECLARATIONS : []),
+  ];
+}
+
+async function executeForSeat(seat, folderId, name, args, signal) {
+  if (!declarations(seat, folderId).some((tool) => tool.name === name)) {
+    throw new Error(`The action ${name} is not available to this seat and run.`);
+  }
+  if (github.DECLARATIONS.some((tool) => tool.name === name)) {
+    return github.execute(name, args, signal);
+  }
+  return execute(folderId, name, args);
+}
+
+module.exports = { DECLARATIONS, execute, declarations, executeForSeat };

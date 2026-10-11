@@ -36,6 +36,34 @@ Functions on the same site, reading the same `GEMINI_API_KEY`.
 
 ---
 
+## Seat access to Drive and GitHub
+
+Drive uses `GOOGLE_SA_KEY_JSON` (raw or base64-encoded service-account JSON) and a signed JWT
+with `sub: jonassaint@queerpathways.org`. Enable domain-wide delegation for the service account
+in Google Cloud, then have a Workspace administrator authorize its OAuth client ID for
+`https://www.googleapis.com/auth/drive` in the Admin console. The impersonated user must have
+access to the target folder; delegation alone does not grant folder access.
+
+Documents are created directly inside the operator-bound folder, with `parents` set on creation
+and `supportsAllDrives=true`. The shared helper falls back to `GOOGLE_DRIVE_FOLDER_ID` only when
+called without a folder; chat and `finance-run` pass their bound folder explicitly. The finance
+`create` and `collect` actions now both return `filed: true` without a separate move.
+
+Robert receives `github_get_file`, `github_create_branch`, `github_write_file`, and
+`github_open_pull_request`, with or without a Drive folder. Other seats do not receive or execute
+these actions. Repository access is restricted server-side to `jonassaint-QP/pathways-console`,
+`jonassaint-QP/QP-Store`, `jonassaint-QP/QP-Clinical`, and `jonassaint-QP/QueerPathways`.
+
+Set `ROBERT_GITHUB_TOKEN` as a secret function environment variable (preferred); `GITHUB_TOKEN`
+is the fallback. Use a fine-grained token scoped to those four repositories with Contents
+read/write and Pull requests read/write permissions, and Metadata read access. Missing or refused
+credentials return action errors rather than empty success. Tokens never go into model tool arguments.
+File writes commit complete UTF-8 contents on a named branch; updates require the current file SHA.
+The tools can create working branches and open pull requests, but do not merge or deploy.
+Creating a pull request or committing code is not proof that a change is live.
+
+---
+
 ## Two switches, and only one of them is yours today
 
 **The console works as soon as the site exists.** It is private: no index, no links, unguessable URL.

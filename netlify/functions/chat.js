@@ -5,6 +5,7 @@
 // folderId is optional and operator-supplied. When it is present the seat is given the four
 // folder actions as tools, so it can list what it was handed, read a source, write a document
 // and file it. The model is never told the id and cannot name one.
+// Robert also receives four repository actions, regardless of whether a folder is bound.
 
 const seats = require("./seats.json");
 const { record, initBlobs } = require("./_record.js");
@@ -61,13 +62,14 @@ exports.handler = stream(async (event, context) => {
     seat.voice ? `VOICE.\n${seat.voice}` : "",
     seat.never ? `WHAT YOU NEVER DO.\n${seat.never}` : "",
     folderId ? reply.FOLDER_NOTE : "",
+    seat.id === "robert" ? reply.GITHUB_NOTE : "",
   ].filter(Boolean).join("\n");
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const first = await reply.callModel(key, reply.MODEL, instruction, contents, folderId, controller);
+    const first = await reply.callModel(key, reply.MODEL, instruction, contents, folderId, controller, seat);
     if (!first.ok) {
       clearTimeout(timer);
       console.error("chat upstream", first.status, first.detail);
