@@ -170,7 +170,10 @@ test("Robert gets GitHub tools without a folder and tool rounds preserve thought
   const payloads = chat.calls.map((call) => JSON.parse(call.init.body));
   for (const payload of payloads) {
     assert.deepEqual(payload.tools[0].functionDeclarations.map((tool) => tool.name),
-      ["github_get_file", "github_create_branch", "github_write_file", "github_open_pull_request"]);
+      [
+        "github_get_file", "github_create_branch", "github_write_file", "github_open_pull_request",
+        "github_list_pull_requests", "github_list_commits", "github_get_tree", "probe_url",
+      ]);
   }
   assert.deepEqual(payloads[1].contents[1].parts[0], toolPart);
   assert.equal(executed[0][0].id, "robert");
@@ -180,7 +183,7 @@ test("Robert gets GitHub tools without a folder and tool rounds preserve thought
 test("folder tools and GitHub tools are composed only for the appropriate seat", async () => {
   for (const [seatId, folderId, count] of [
     ["jason", "", 0], ["jason", "folder123", 4],
-    ["robert", "", 4], ["robert", "folder123", 8],
+    ["robert", "", 8], ["robert", "folder123", 12],
   ]) {
     const chat = loadChat({ upstream: response(sse(["Hello"])) });
     await run(chat, { seatId, folderId });

@@ -66,12 +66,12 @@ const DECLARATIONS = [
   },
   {
     name: "github_list_pull_requests",
-    description: "List pull requests in one of Robert's four repositories, filtered by state.",
+    description: "List open, closed or all pull requests in one of Robert's four repositories.",
     parameters: {
       type: "object",
       properties: {
         repo: repoProperty,
-        state: { type: "string", enum: ["open", "closed", "all"], description: "Filter by PR state. Defaults to open." },
+        state: { type: "string", enum: ["open", "closed", "all"], description: "Filter PRs by state; defaults to open." },
       },
       required: ["repo"],
     },
@@ -85,6 +85,7 @@ const DECLARATIONS = [
         repo: repoProperty,
         branch: branchProperty,
         limit: { type: "integer", description: "Number of commits to return (1-30). Defaults to 10." },
+        sha: { type: "string", description: "Branch name or commit SHA to inspect; defaults to the default branch." },
       },
       required: ["repo"],
     },
@@ -97,6 +98,7 @@ const DECLARATIONS = [
       properties: {
         repo: repoProperty,
         ref: { type: "string", description: "Branch name or commit SHA. Defaults to the default branch." },
+        tree_sha: { type: "string", description: "Branch name or commit SHA to inspect; defaults to default branch." },
       },
       required: ["repo"],
     },
@@ -239,7 +241,7 @@ async function execute(name, args, signal) {
   }
 
   if (name === "github_list_pull_requests") {
-    const state = a.state && ["open", "closed", "all"].includes(a.state) ? a.state : "open";
+    const state = ["open", "closed", "all"].includes(a.state) ? a.state : "open";
     const { data } = await octokit.pulls.list({
       ...common,
       state,
@@ -254,41 +256,44 @@ async function execute(name, args, signal) {
         base: pr.base.ref,
         draft: pr.draft,
         url: pr.html_url,
+        html_url: pr.html_url,
+        created_at: pr.created_at,
+        merged_at: pr.merged_at,
       })),
     };
   }
 
   if (name === "github_list_commits") {
-    const ref = a.branch ? branch(a.branch, "branch") : await defaultBranch();
-    const limit = typeof a.limit === "number" && a.limit > 0 && a.limit <= 30 ? a.limit : 10;
+    const ref = a.branch ? branch(a.branch, "branch") : a.sha ? required(a.sha, "sha") : await defaultBranch();
+    const per_page = Math.min(Math.max(Number(a.limit) || 10, 1), 30);
     const { data } = await octokit.repos.listCommits({
       ...common,
       sha: ref,
-      per_page: limit,
+      per_page,
     });
     return {
       commits: data.map((c) => ({
         sha: c.sha.substring(0, 7),
         full_sha: c.sha,
         message: c.commit.message.split("\n")[0],
-        author: c.commit.author.name,
-        date: c.commit.author.date,
+        author: c.commit.author?.name,
+        date: c.commit.author?.date,
+        url: c.html_url,
       })),
     };
   }
 
   if (name === "github_get_tree") {
-    const ref = a.ref ? required(a.ref, "ref") : await defaultBranch();
+    const ref = a.ref ? required(a.ref, "ref") : a.tree_sha ? required(a.tree_sha, "tree_sha") : await defaultBranch();
     const { data } = await octokit.git.getTree({
       ...common,
       tree_sha: ref,
       recursive: "true",
     });
     return {
+      sha: data.sha,
       truncated: data.truncated,
-      tree: data.tree
-        .filter((item) => item.type === "blob")
-        .map((item) => ({ path: item.path, sha: item.sha, size: item.size })),
+      tree: data.tree.map((item) => ({ path: item.path, sha: item.sha, mode: item.mode, type: item.type, size: item.size })),
     };
   }
 
