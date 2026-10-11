@@ -55,6 +55,43 @@ const DECLARATIONS = [
       required: ["repo", "head", "title", "body"],
     },
   },
+  {
+    name: "github_list_pull_requests",
+    description: "List open, closed or all pull requests in one of Robert's four repositories.",
+    parameters: {
+      type: "object",
+      properties: {
+        repo: repoProperty,
+        state: { type: "string", enum: ["open", "closed", "all"], description: "Filter PRs by state; defaults to open." },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "github_list_commits",
+    description: "List recent commits on a branch in one of Robert's four repositories.",
+    parameters: {
+      type: "object",
+      properties: {
+        repo: repoProperty,
+        sha: { type: "string", description: "Branch name or commit SHA to inspect; defaults to the default branch." },
+        limit: { type: "number", description: "Number of commits to return (max 30); defaults to 10." },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "github_get_tree",
+    description: "Get the recursive file tree of a repository branch to understand project structure.",
+    parameters: {
+      type: "object",
+      properties: {
+        repo: repoProperty,
+        tree_sha: { type: "string", description: "Branch name or commit SHA to inspect; defaults to default branch." },
+      },
+      required: ["repo"],
+    },
+  },
 ];
 
 function required(value, name) {
@@ -127,15 +164,71 @@ async function execute(name, args, signal) {
     return { path: data.content?.path, sha: data.content?.sha, commit_sha: data.commit.sha, url: data.content?.html_url };
   }
 
-  const { data } = await octokit.pulls.create({
-    ...common,
-    head: branch(a.head, "head"),
-    base: a.base ? branch(a.base, "base") : await defaultBranch(),
-    title: required(a.title, "title"),
-    body: typeof a.body === "string" ? a.body : required(a.body, "body"),
-    draft: a.draft === true,
-  });
-  return { number: data.number, url: data.html_url, state: data.state };
+  if (name === "github_open_pull_request") {
+    const { data } = await octokit.pulls.create({
+      ...common,
+      head: branch(a.head, "head"),
+      base: a.base ? branch(a.base, "base") : await defaultBranch(),
+      title: required(a.title, "title"),
+      body: typeof a.body === "string" ? a.body : required(a.body, "body"),
+      draft: a.draft === true,
+    });
+    return { number: data.number, url: data.html_url, state: data.state };
+  }
+
+  if (name === "github_list_pull_requests") {
+    const state = ["open", "closed", "all"].includes(a.state) ? a.state : "open";
+    const { data } = await octokit.pulls.list({
+      ...common,
+      state,
+      per_page: 20,
+    });
+    return {
+      pull_requests: data.map((pr) => ({
+        number: pr.number,
+        title: pr.title,
+        state: pr.state,
+        head: pr.head.ref,
+        base: pr.base.ref,
+        draft: pr.draft,
+        html_url: pr.html_url,
+        created_at: pr.created_at,
+        merged_at: pr.merged_at,
+      })),
+    };
+  }
+
+  if (name === "github_list_commits") {
+    const per_page = Math.min(Math.max(Number(a.limit) || 10, 1), 30);
+    const { data } = await octokit.repos.listCommits({
+      ...common,
+      ...(a.sha ? { sha: String(a.sha) } : {}),
+      per_page,
+    });
+    return {
+      commits: data.map((c) => ({
+        sha: c.sha,
+        message: c.commit.message,
+        author: c.commit.author?.name,
+        date: c.commit.author?.date,
+        url: c.html_url,
+      })),
+    };
+  }
+
+  if (name === "github_get_tree") {
+    const tree_sha = a.tree_sha ? String(a.tree_sha) : await defaultBranch();
+    const { data } = await octokit.git.getTree({
+      ...common,
+      tree_sha,
+      recursive: "true",
+    });
+    return {
+      sha: data.sha,
+      truncated: data.truncated,
+      tree: data.tree.map((item) => ({ path: item.path, mode: item.mode, type: item.type, size: item.size })),
+    };
+  }
 }
 
 module.exports = { DECLARATIONS, execute, REPOS };
