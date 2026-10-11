@@ -3,11 +3,11 @@
 // Split out of chat.js so each file stays small enough to commit whole. A truncated commit
 // of this file would silently remove half the pipeline, which is exactly what happened once.
 //
-// Drive is scoped to the operator-bound folder. GitHub is scoped to Robert's four repos.
+// Drive is scoped to the operator-bound folder. GitHub is scoped to Robert's repositories.
 
 const seatTools = require("./_seat-tools");
 
-const MAX_TOOL_ROUNDS = 6;
+const MAX_TOOL_ROUNDS = 20;
 const MODEL = "gemini-3.8-flash";
 
 // What the seat is told when it has been handed a folder. It is told the actions exist and
@@ -28,7 +28,8 @@ const FOLDER_NOTE = [
 const GITHUB_NOTE = [
   "YOUR GITHUB ACTIONS.",
   "You can read files and directories, create working branches, commit file creates or updates,",
-  "and open pull requests in jonassaint-QP/pathways-console, QP-Store, QP-Clinical and QueerPathways.",
+  "and open pull requests in jonassaint-QP/pathways-console, QP-Store, QP-Clinical, QueerPathways,",
+  "QP-Backroom-v2 and QP-Backroom-Retired.",
   "Use github_get_file, github_create_branch, github_write_file and github_open_pull_request.",
   "Read the current file from the branch you will update and pass its SHA to avoid overwriting",
   "concurrent changes. Create a working branch before writing and open a pull request for review.",
