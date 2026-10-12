@@ -2,7 +2,8 @@
 //
 // A seat's reply used to be text only, so it could never collect a source document, never
 // write a document, and never file one. This module is the missing half: four callable
-// Drive actions, the same four that finance-run exposes, plus Robert's repository actions.
+// Drive actions, the same four that finance-run exposes, plus Robert's repository actions
+// and hosting deploy verification tools.
 //
 // For Drive, the folder is bound by the operator, not by the model. The model is never given the folder
 // id and cannot name one: every action here is scoped to the folder the request carried, and
@@ -13,6 +14,7 @@
 
 const drive = require("./_drive");
 const github = require("./_github");
+const netlify = require("./_netlify");
 
 const DECLARATIONS = [
   {
@@ -101,7 +103,7 @@ async function execute(folderId, name, args) {
 function declarations(seat, folderId) {
   return [
     ...(folderId ? DECLARATIONS : []),
-    ...(seat?.id === "robert" ? github.DECLARATIONS : []),
+    ...(seat?.id === "robert" ? [...github.DECLARATIONS, ...netlify.DECLARATIONS] : []),
   ];
 }
 
@@ -111,6 +113,9 @@ async function executeForSeat(seat, folderId, name, args, signal) {
   }
   if (github.DECLARATIONS.some((tool) => tool.name === name)) {
     return github.execute(name, args, signal);
+  }
+  if (netlify.DECLARATIONS.some((tool) => tool.name === name)) {
+    return netlify.execute(name, args, signal);
   }
   return execute(folderId, name, args);
 }
