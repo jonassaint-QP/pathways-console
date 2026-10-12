@@ -14,7 +14,12 @@ const reply = require("./_chat-reply.js");
 const { stream } = require("@netlify/functions");
 const { Readable } = require("node:stream");
 
-const TIMEOUT_MS = 90000;
+// The Starter/Free Netlify plan hard-kills a function at 10 seconds of execution, streaming
+// or not, with zero signal to the client when it happens mid-stream. TIMEOUT_MS must stay
+// safely under that ceiling so the app's own abort always fires first and can flush a proper
+// "error" event before the platform silently cuts the connection. Raise this only if the site
+// is on a plan with a longer execution limit (see README).
+const TIMEOUT_MS = Number(process.env.CHAT_TIMEOUT_MS) || 8000;
 const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
 

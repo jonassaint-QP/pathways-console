@@ -118,26 +118,26 @@ const DECLARATIONS = [
 ];
 
 // One call from the model, executed against one folder hierarchy, and nothing else.
-async function execute(folderId, name, args) {
+async function execute(folderId, name, args, signal) {
   const a = args && typeof args === "object" ? args : {};
   if (!folderId) throw new Error("A Drive folder must be bound before using Drive actions.");
 
   if (name === "list_folder") {
     const targetFolder = String(a.folder_id || "").trim() || folderId;
-    if (!(await drive.isInside(targetFolder, folderId))) {
+    if (!(await drive.isInside(targetFolder, folderId, signal))) {
       return { error: "That folder is not inside the folder hierarchy you were given." };
     }
-    const files = await drive.listFolder(targetFolder);
+    const files = await drive.listFolder(targetFolder, signal);
     return { folder_id: targetFolder, count: files.length, files };
   }
 
   if (name === "read_document") {
     const fileId = String(a.file_id || "").trim();
     if (!fileId) return { error: "file_id is required." };
-    if (!(await drive.isInside(fileId, folderId))) {
+    if (!(await drive.isInside(fileId, folderId, signal))) {
       return { error: "That document is not inside the folder hierarchy you were given." };
     }
-    const f = await drive.readFile(fileId);
+    const f = await drive.readFile(fileId, signal);
     return f.encoding === "utf8"
       ? { id: f.id, name: f.name, mime_type: f.mimeType, text: f.text }
       : { id: f.id, name: f.name, mime_type: f.mimeType, base64: f.base64, note: "Binary. Not text, so do not infer figures from it." };
@@ -149,10 +149,12 @@ async function execute(folderId, name, args) {
     const targetFolder = String(a.folder_id || "").trim() || folderId;
     if (!title) return { error: "title is required." };
     if (!text.trim()) return { error: "text is required. An empty document is not a deliverable." };
-    if (!(await drive.isInside(targetFolder, folderId))) {
+    if (!(await drive.isInside(targetFolder, folderId, signal))) {
       return { error: "Target folder is not inside the folder hierarchy you were given." };
     }
-    const doc = await drive.createDoc(title, text, targetFolder);
+    const doc = signal
+      ? await drive.createDoc(title, text, targetFolder, signal)
+      : await drive.createDoc(title, text, targetFolder);
     return { id: doc.id, url: doc.url, filed_in: targetFolder };
   }
 
@@ -160,10 +162,10 @@ async function execute(folderId, name, args) {
     const folderName = String(a.name || "").trim();
     const parentFolder = String(a.parent_folder_id || "").trim() || folderId;
     if (!folderName) return { error: "name is required." };
-    if (!(await drive.isInside(parentFolder, folderId))) {
+    if (!(await drive.isInside(parentFolder, folderId, signal))) {
       return { error: "Parent folder is not inside the folder hierarchy you were given." };
     }
-    const folder = await drive.createFolder(folderName, parentFolder);
+    const folder = await drive.createFolder(folderName, parentFolder, signal);
     return { id: folder.id, name: folder.name, url: folder.url, parent_id: parentFolder };
   }
 
@@ -171,13 +173,13 @@ async function execute(folderId, name, args) {
     const fileId = String(a.file_id || "").trim();
     const targetFolder = String(a.target_folder_id || "").trim() || folderId;
     if (!fileId) return { error: "file_id is required." };
-    if (!(await drive.isInside(fileId, folderId))) {
+    if (!(await drive.isInside(fileId, folderId, signal))) {
       return { error: "The file you are trying to move is not inside your folder hierarchy." };
     }
-    if (!(await drive.isInside(targetFolder, folderId))) {
+    if (!(await drive.isInside(targetFolder, folderId, signal))) {
       return { error: "The target destination folder is not inside your folder hierarchy." };
     }
-    const moved = await drive.fileInto(fileId, targetFolder);
+    const moved = await drive.fileInto(fileId, targetFolder, signal);
     return { id: moved.id, url: moved.url, filed_in: targetFolder };
   }
 
@@ -186,10 +188,10 @@ async function execute(folderId, name, args) {
     const newName = String(a.new_name || "").trim();
     if (!fileId) return { error: "file_id is required." };
     if (!newName) return { error: "new_name is required." };
-    if (!(await drive.isInside(fileId, folderId))) {
+    if (!(await drive.isInside(fileId, folderId, signal))) {
       return { error: "That item is not inside the folder hierarchy you were given." };
     }
-    const renamed = await drive.renameFile(fileId, newName);
+    const renamed = await drive.renameFile(fileId, newName, signal);
     return { id: renamed.id, name: renamed.name, url: renamed.url };
   }
 
@@ -198,10 +200,10 @@ async function execute(folderId, name, args) {
     const text = String(a.text == null ? "" : a.text);
     if (!fileId) return { error: "file_id is required." };
     if (!text.trim()) return { error: "text is required." };
-    if (!(await drive.isInside(fileId, folderId))) {
+    if (!(await drive.isInside(fileId, folderId, signal))) {
       return { error: "That document is not inside the folder hierarchy you were given." };
     }
-    const updated = await drive.updateDoc(fileId, text);
+    const updated = await drive.updateDoc(fileId, text, signal);
     return { id: updated.id, name: updated.name, url: updated.url };
   }
 
@@ -225,7 +227,7 @@ async function executeForSeat(seat, folderId, name, args, signal) {
   if (netlify.DECLARATIONS.some((tool) => tool.name === name)) {
     return netlify.execute(name, args, signal);
   }
-  return execute(folderId, name, args);
+  return execute(folderId, name, args, signal);
 }
 
 module.exports = { DECLARATIONS, execute, declarations, executeForSeat };

@@ -70,7 +70,7 @@ function b64url(input) {
     .replace(/=+$/, "");
 }
 
-async function accessToken() {
+async function accessToken(signal) {
   const now = Math.floor(Date.now() / 1000);
   if (cached && cached.expiresAt - 60 > now) return cached.token;
 
@@ -93,6 +93,7 @@ async function accessToken() {
 
   const res = await fetch(TOKEN_URL, {
     method: "POST",
+    signal,
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -109,10 +110,11 @@ async function accessToken() {
   return cached.token;
 }
 
-async function call(url, init) {
-  const token = await accessToken();
+async function call(url, init, signal) {
+  const token = await accessToken(signal);
   const res = await fetch(url, {
     ...(init || {}),
+    signal,
     headers: { ...((init && init.headers) || {}), authorization: `Bearer ${token}` },
   });
   const text = await res.text();
@@ -126,16 +128,18 @@ async function call(url, init) {
   return body;
 }
 
-async function meta(fileId) {
-  return call(`${API}/files/${id(fileId, "file")}?fields=id,name,mimeType,modifiedTime,parents,webViewLink&supportsAllDrives=true`);
+async function meta(fileId, signal) {
+  return call(`${API}/files/${id(fileId, "file")}?fields=id,name,mimeType,modifiedTime,parents,webViewLink&supportsAllDrives=true`, undefined, signal);
 }
 
 // Everything directly inside one folder. Nothing else is reachable through this call.
-async function listFolder(folderId) {
+async function listFolder(folderId, signal) {
   const f = id(folderId, "folder");
   const q = encodeURIComponent(`'${f}' in parents and trashed = false`);
   const body = await call(
-    `${API}/files?q=${q}&fields=files(id,name,mimeType,modifiedTime,size)&pageSize=200&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`
+    `${API}/files?q=${q}&fields=files(id,name,mimeType,modifiedTime,size)&pageSize=200&orderBy=name&supportsAllDrives=true&includeItemsFromAllDrives=true`,
+    undefined,
+    signal
   );
   return (body.files || []).map((x) => ({
     id: x.id,
@@ -149,22 +153,24 @@ async function listFolder(folderId) {
 
 // A Google Doc comes back as text. A PDF or a Word file comes back as base64, with its type,
 // for the caller to hand on. Nothing is written to disk and nothing is logged.
-async function readFile(fileId) {
-  const info = await meta(fileId);
+async function readFile(fileId, signal) {
+  const info = await meta(fileId, signal);
   const googleNative = [DOC, SHEET, SLIDES].includes(info.mimeType);
 
   if (googleNative) {
     const exportAs = info.mimeType === SHEET ? "text/csv" : "text/plain";
-    const token = await accessToken();
+    const token = await accessToken(signal);
     const res = await fetch(`${API}/files/${info.id}/export?mimeType=${encodeURIComponent(exportAs)}`, {
+      signal,
       headers: { authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error(`Drive refused to export the document (${res.status}).`);
     return { id: info.id, name: info.name, mimeType: info.mimeType, text: await res.text(), encoding: "utf8" };
   }
 
-  const token = await accessToken();
+  const token = await accessToken(signal);
   const res = await fetch(`${API}/files/${info.id}?alt=media&supportsAllDrives=true`, {
+    signal,
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`Drive refused to read the file (${res.status}).`);
@@ -173,7 +179,7 @@ async function readFile(fileId) {
 }
 
 // Create inside the target folder, never in the service account's root.
-async function createDoc(title, text, folderId = process.env.GOOGLE_DRIVE_FOLDER_ID) {
+async function createDoc(title, text, folderId = process.env.GOOGLE_DRIVE_FOLDER_ID, signal) {
   const name = String(title == null ? "" : title).trim();
   if (!name) throw new Error("A title is required to create a document.");
   const parent = id(folderId, "folder");
@@ -182,19 +188,19 @@ async function createDoc(title, text, folderId = process.env.GOOGLE_DRIVE_FOLDER
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, mimeType: DOC, parents: [parent] }),
-  });
+  }, signal);
 
   await call(`${UPLOAD}/files/${created.id}?uploadType=media&supportsAllDrives=true`, {
     method: "POST",
     headers: { "content-type": "text/plain; charset=utf-8" },
     body: String(text == null ? "" : text),
-  });
+  }, signal);
 
   return { id: created.id, url: created.webViewLink || `https://docs.google.com/document/d/${created.id}/edit` };
 }
 
 // Create a directory folder inside the target folder.
-async function createFolder(name, parentFolderId) {
+async function createFolder(name, parentFolderId, signal) {
   const folderName = String(name == null ? "" : name).trim();
   if (!folderName) throw new Error("A folder name is required.");
   const parent = id(parentFolderId, "folder");
@@ -203,25 +209,25 @@ async function createFolder(name, parentFolderId) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: folderName, mimeType: FOLDER, parents: [parent] }),
-  });
+  }, signal);
 
   return { id: created.id, name: created.name, url: created.webViewLink || null };
 }
 
 // Update the text content of an existing Google Document.
-async function updateDoc(fileId, text) {
+async function updateDoc(fileId, text, signal) {
   const f = id(fileId, "file");
   await call(`${UPLOAD}/files/${f}?uploadType=media&supportsAllDrives=true`, {
     method: "PATCH",
     headers: { "content-type": "text/plain; charset=utf-8" },
     body: String(text == null ? "" : text),
-  });
-  const updated = await meta(f);
+  }, signal);
+  const updated = await meta(f, signal);
   return { id: updated.id, name: updated.name, url: updated.webViewLink || `https://docs.google.com/document/d/${f}/edit` };
 }
 
 // Rename an existing file or folder.
-async function renameFile(fileId, newName) {
+async function renameFile(fileId, newName, signal) {
   const f = id(fileId, "file");
   const name = String(newName == null ? "" : newName).trim();
   if (!name) throw new Error("A new name is required.");
@@ -230,19 +236,19 @@ async function renameFile(fileId, newName) {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name }),
-  });
+  }, signal);
 
   return { id: renamed.id, name: renamed.name, url: renamed.webViewLink || null };
 }
 
 // Is this file or folder equal to, or descendant of, the root folder? Fails closed.
-async function isInside(fileId, folderId) {
+async function isInside(fileId, folderId, signal) {
   const want = id(folderId, "folder");
   let current = id(fileId, "file");
   if (current === want) return true;
 
   for (let step = 0; step < MAX_WALK; step++) {
-    const info = await meta(current);
+    const info = await meta(current, signal);
     const parents = info.parents || [];
     if (parents.includes(want)) return true;
     if (!parents.length) return false;
@@ -252,16 +258,16 @@ async function isInside(fileId, folderId) {
 }
 
 // Put the file in the folder, and take it out of wherever it was.
-async function fileInto(fileId, folderId) {
+async function fileInto(fileId, folderId, signal) {
   const f = id(fileId, "file");
   const into = id(folderId, "folder");
-  const info = await meta(f);
+  const info = await meta(f, signal);
   const from = (info.parents || []).filter((p) => p !== into);
 
   const params = new URLSearchParams({ addParents: into, fields: "id,parents,webViewLink", supportsAllDrives: "true" });
   if (from.length) params.set("removeParents", from.join(","));
 
-  const moved = await call(`${API}/files/${f}?${params.toString()}`, { method: "PATCH" });
+  const moved = await call(`${API}/files/${f}?${params.toString()}`, { method: "PATCH" }, signal);
   return { id: moved.id, parents: moved.parents || [], url: moved.webViewLink || null };
 }
 
