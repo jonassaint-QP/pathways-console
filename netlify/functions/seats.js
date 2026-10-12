@@ -11,6 +11,9 @@ exports.handler = async (event) => {
     id,
     name: seats[id].name,
     title: seats[id].title,
+    role: seats[id].role || seats[id].title,
+    status: seats[id].status || "active",
+    unread: seats[id].unread || 0,
     model: seats[id].model || null,
     portrait: seats[id].portrait || null,
   }));

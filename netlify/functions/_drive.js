@@ -1,7 +1,8 @@
 // Google Drive access for the seats, delegated to the estate's Workspace user.
 //
 // The seats can talk but cannot reach a folder. This module is the read and write path they
-// use: list a folder, read a document, create a document, file it.
+// use: list a folder, read a document, create a document, file it, create folders, move, rename,
+// and update documents.
 //
 // Auth is a service-account JWT assertion exchanged for an access token, cached in module
 // scope until it is within a minute of expiry. No googleapis, no build step, plain fetch.
@@ -9,9 +10,8 @@
 // The key lives in GOOGLE_SA_KEY_JSON on the host and nowhere else. Never logged, never
 // echoed in an error, never returned. Accepts the raw JSON or the same JSON base64-encoded.
 //
-// Scope is the whole of Drive, which is broad, so this module is not the boundary. The caller
-// is: finance-run.js refuses every operation outside the one folder it is handed, and checks
-// each target against that folder before touching it.
+// Scope is bounded to the root folder passed into the session: actions refuse every operation
+// outside that root and verify target folders/files are strictly within that hierarchy.
 
 const crypto = require("crypto");
 
@@ -193,10 +193,54 @@ async function createDoc(title, text, folderId = process.env.GOOGLE_DRIVE_FOLDER
   return { id: created.id, url: created.webViewLink || `https://docs.google.com/document/d/${created.id}/edit` };
 }
 
-// Is this file, or any folder above it, the folder we were given? Fails closed.
+// Create a directory folder inside the target folder.
+async function createFolder(name, parentFolderId) {
+  const folderName = String(name == null ? "" : name).trim();
+  if (!folderName) throw new Error("A folder name is required.");
+  const parent = id(parentFolderId, "folder");
+
+  const created = await call(`${API}/files?fields=id,name,mimeType,webViewLink&supportsAllDrives=true`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: folderName, mimeType: FOLDER, parents: [parent] }),
+  });
+
+  return { id: created.id, name: created.name, url: created.webViewLink || null };
+}
+
+// Update the text content of an existing Google Document.
+async function updateDoc(fileId, text) {
+  const f = id(fileId, "file");
+  await call(`${UPLOAD}/files/${f}?uploadType=media&supportsAllDrives=true`, {
+    method: "PATCH",
+    headers: { "content-type": "text/plain; charset=utf-8" },
+    body: String(text == null ? "" : text),
+  });
+  const updated = await meta(f);
+  return { id: updated.id, name: updated.name, url: updated.webViewLink || `https://docs.google.com/document/d/${f}/edit` };
+}
+
+// Rename an existing file or folder.
+async function renameFile(fileId, newName) {
+  const f = id(fileId, "file");
+  const name = String(newName == null ? "" : newName).trim();
+  if (!name) throw new Error("A new name is required.");
+
+  const renamed = await call(`${API}/files/${f}?fields=id,name,mimeType,webViewLink&supportsAllDrives=true`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  return { id: renamed.id, name: renamed.name, url: renamed.webViewLink || null };
+}
+
+// Is this file or folder equal to, or descendant of, the root folder? Fails closed.
 async function isInside(fileId, folderId) {
   const want = id(folderId, "folder");
   let current = id(fileId, "file");
+  if (current === want) return true;
+
   for (let step = 0; step < MAX_WALK; step++) {
     const info = await meta(current);
     const parents = info.parents || [];
@@ -225,6 +269,9 @@ module.exports = {
   listFolder,
   readFile,
   createDoc,
+  createFolder,
+  updateDoc,
+  renameFile,
   fileInto,
   isInside,
   meta,
