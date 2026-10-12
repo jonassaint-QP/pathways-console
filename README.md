@@ -4,7 +4,7 @@
 
 The console (private, seven seats) and the website assistant (public, one brief) run as Netlify Functions
 on the same site. The console (`chat.js`) and image generation (`visual.js`) read `GEMINI_API_KEY`. The
-public widget (`assistant.js`) reads `ANTHROPIC_API_KEY` and runs on Claude instead.
+public widget (`assistant.js`) reads `CLAUDE_API_KEY` and runs on Claude instead.
 
 ---
 
@@ -33,7 +33,7 @@ public widget (`assistant.js`) reads `ANTHROPIC_API_KEY` and runs on Claude inst
 2. **Environment variables on that site:**
    - `GEMINI_API_KEY` — powers the console (`chat.js`) and image generation (`visual.js`). **Already
      present in the existing project.** If this is a *new* site, add it there.
-   - `ANTHROPIC_API_KEY` — powers the public widget (`assistant.js`) only, which runs on Claude.
+   - `CLAUDE_API_KEY` — powers the public widget (`assistant.js`) only, which runs on Claude.
    - `ASSISTANT_ENABLED` — **leave unset.** The public widget refuses until this is `"true"`.
 3. **Deploy.** The console is at the site root.
 

@@ -18,7 +18,7 @@ exports.handler = async (event) => {
       message: "The assistant is not switched on.",
     });
   }
-  const key = process.env.ANTHROPIC_API_KEY;
+  const key = process.env.CLAUDE_API_KEY;
   if (!key) return json(503, { error: "assistant_unavailable", message: "The assistant is not configured." });
   if (event.httpMethod !== "POST") return json(405, { error: "method_not_allowed" });
 
