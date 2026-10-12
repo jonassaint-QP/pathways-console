@@ -71,6 +71,7 @@ exports.handler = stream(async (event, context) => {
   ].filter(Boolean).join("\n");
 
   const controller = new AbortController();
+  const deadline = Date.now() + TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
@@ -94,7 +95,7 @@ exports.handler = stream(async (event, context) => {
       statusCode: 200,
       headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" },
       body: Readable.from(reply.replyStream({
-        key, seat, contents, folderId, controller, timer, res: first.res, instruction, record,
+        key, seat, contents, folderId, controller, timer, deadline, res: first.res, instruction, record,
       })),
     };
   } catch (err) {

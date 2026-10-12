@@ -10,6 +10,11 @@ const seatTools = require("./_seat-tools");
 const MAX_TOOL_ROUNDS = 20;
 const MODEL = "gemini-3.8-flash";
 
+// How much time is reserved, before the hard deadline, to stop searching and ask the model to
+// summarize whatever it has found so far. Without this, a search that runs out the clock is
+// discarded whole and the operator is left with nothing — see WRAP_UP_NOTE below.
+const WRAP_UP_MARGIN_MS = 6000;
+
 // What the seat is told when it has been handed a folder. It is told the actions exist and
 // that the folder is fixed. It is not told the id, and it is told not to try to name one.
 const FOLDER_NOTE = [
@@ -37,16 +42,27 @@ const GITHUB_NOTE = [
   "GitHub actions do not need a Drive folder. If the token is missing or refused, say so and stop.",
 ].join("\n");
 
-async function callModel(key, model, instruction, contents, folderId, controller, seat) {
+// Told only on the one round where time is nearly out. No further actions are offered to the
+// model on this call (see callModel's noTools option), so it cannot ask for one anyway.
+const WRAP_UP_NOTE = [
+  "YOU ARE NEARLY OUT OF TIME.",
+  "Do not request any further actions; none are available on this turn. Answer now, in plain",
+  "text, from what you have already found. If the task is incomplete, say plainly what you found",
+  "and what is still open, so the operator can ask you to continue.",
+].join("\n");
+
+async function callModel(key, model, instruction, contents, folderId, controller, seat, options = {}) {
   const payload = {
     systemInstruction: { parts: [{ text: instruction }] },
     contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
+    generationConfig: { temperature: 0.7, maxOutputTokens: options.wrapUp ? 1024 : 8192 },
   };
-  const declarations = seatTools.declarations(seat, folderId);
-  if (declarations.length) {
-    payload.tools = [{ functionDeclarations: declarations }];
-    payload.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+  if (!options.noTools) {
+    const declarations = seatTools.declarations(seat, folderId);
+    if (declarations.length) {
+      payload.tools = [{ functionDeclarations: declarations }];
+      payload.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+    }
   }
 
   const r = await fetch(
@@ -62,9 +78,10 @@ async function callModel(key, model, instruction, contents, folderId, controller
   return { ok: true, res: r };
 }
 
-async function* replyStream({ key, seat, contents, folderId, controller, timer, res, instruction, record }) {
+async function* replyStream({ key, seat, contents, folderId, controller, timer, deadline, res, instruction, record }) {
   let reply = "";
   let recorded = null;
+  let wrappedUp = false;
   const line = (value) => JSON.stringify(value) + "\n";
   const rounds = [];
 
@@ -131,7 +148,19 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
       }
       contents.push({ role: "user", parts: resultParts });
 
-      const next = await callModel(key, MODEL, instruction, contents, folderId, controller, seat);
+      // Running low on the deadline? Spend what is left on one wrap-up call instead of another
+      // search round: no tools offered, so the model must answer now from what it already has.
+      const closeToDeadline = !wrappedUp && deadline && (deadline - Date.now()) <= WRAP_UP_MARGIN_MS;
+      if (closeToDeadline) {
+        wrappedUp = true;
+        yield line({ type: "tool", name: "wrap_up", ok: true, detail: "Running low on time — summarizing findings so far." });
+      }
+      const roundInstruction = closeToDeadline ? `${instruction}\n\n${WRAP_UP_NOTE}` : instruction;
+
+      const next = await callModel(
+        key, MODEL, roundInstruction, contents, folderId, controller, seat,
+        closeToDeadline ? { noTools: true, wrapUp: true } : {}
+      );
       if (!next.ok) {
         throw new Error(`The model failed after an action (${next.status}): ${String(next.detail || "").slice(0, 300)}`);
       }

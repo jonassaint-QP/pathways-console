@@ -34,7 +34,7 @@ function loadChat(options = {}) {
       };
       return require(name);
     },
-    process: { env: { GEMINI_API_KEY: "synthetic-test-key" } },
+    process: { env: { GEMINI_API_KEY: "synthetic-test-key", ...(options.env || {}) } },
     console: { error: (...args) => logs.push(args) },
     AbortController, TextDecoder, setTimeout, clearTimeout,
     fetch: async (url, init) => {
@@ -178,6 +178,35 @@ test("Robert gets GitHub tools without a folder and tool rounds preserve thought
   assert.deepEqual(payloads[1].contents[1].parts[0], toolPart);
   assert.equal(executed[0][0].id, "robert");
   assert.equal(executed[0][1], "");
+});
+
+test("a run close to the deadline wraps up with a summary instead of hard-aborting", async () => {
+  const toolPart = { functionCall: { name: "list_folder", args: {} } };
+  const first = "data: " + JSON.stringify({
+    candidates: [{ content: { parts: [toolPart] }, finishReason: "STOP" }],
+  }) + "\n\n";
+  // CHAT_TIMEOUT_MS=1 means the deadline has already effectively passed by the time the
+  // first tool round finishes executing, forcing the wrap-up branch deterministically.
+  const chat = loadChat({
+    env: { CHAT_TIMEOUT_MS: "1" },
+    upstream: [response(first), response(sse(["Here is what I found so far."]))],
+    execute: async () => ({ count: 3, files: [] }),
+  });
+  const result = await run(chat, { seatId: "jason", folderId: "folder123" });
+  const events = result.text.trim().split("\n").map(JSON.parse);
+
+  assert.ok(events.some((e) => e.type === "tool" && e.name === "list_folder"));
+  assert.ok(events.some((e) => e.type === "tool" && e.name === "wrap_up"));
+  const done = events.at(-1);
+  assert.equal(done.type, "done");
+  assert.equal(done.reply, "Here is what I found so far.");
+
+  // The wrap-up call must offer no further actions and must carry the wrap-up note, so the
+  // model cannot keep searching and is pushed to answer from what it already has.
+  const wrapUpPayload = JSON.parse(chat.calls[1].init.body);
+  assert.equal(wrapUpPayload.tools, undefined);
+  assert.equal(wrapUpPayload.generationConfig.maxOutputTokens, 1024);
+  assert.match(wrapUpPayload.systemInstruction.parts[0].text, /YOU ARE NEARLY OUT OF TIME/);
 });
 
 test("folder tools and GitHub tools are composed only for the appropriate seat", async () => {
