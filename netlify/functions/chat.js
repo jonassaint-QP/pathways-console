@@ -14,7 +14,7 @@ const reply = require("./_chat-reply.js");
 const { stream } = require("@netlify/functions");
 const { Readable } = require("node:stream");
 
-const TIMEOUT_MS = 45000;
+const TIMEOUT_MS = 90000;
 const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
 
@@ -98,7 +98,7 @@ exports.handler = stream(async (event, context) => {
     console.error("chat failed", timedOut ? "timeout" : err);
     return reply.json(timedOut ? 504 : 502, {
       error: timedOut ? "timeout" : "upstream",
-      message: timedOut ? "That took too long." : "Could not read the model response.",
+      message: timedOut ? "Hey, it's taking a little longer. Give me a few minutes." : "Could not read the model response.",
     });
   }
 });
