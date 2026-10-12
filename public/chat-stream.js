@@ -32,7 +32,7 @@
       if(!line.trim()) return;
       if(done) throw new Error("Unexpected data after the final chat event.");
       var ev=JSON.parse(line);
-      if(ev.type==="error") throw new Error(ev.message||"The answer is incomplete.");
+      if(ev.type==="error") throw new Error(ev.message||"Hey, it's taking a little longer. Give me a few minutes.");
       if(ev.type==="delta"&&typeof ev.text==="string"){ reply+=ev.text; onDelta(reply); }
       else if(ev.type==="tool"){ actions.push(ev); if(typeof onTool==="function") onTool(ev,actions); }
       else if(ev.type==="done"&&typeof ev.reply==="string"&&ev.reply.trim()){
@@ -47,8 +47,8 @@
         var i; while((i=buf.indexOf("\n"))!==-1){ take(buf.slice(0,i)); buf=buf.slice(i+1); }
       }
       buf+=dec.decode();
-      if(buf.trim()) throw new Error("The stream ended mid-event. The answer is incomplete.");
-      if(!done) throw new Error("The stream ended before the answer was complete.");
+      if(buf.trim()) throw new Error("The stream ended mid-event. Hey, it's taking a little longer. Give me a few minutes.");
+      if(!done) throw new Error("The stream ended before the answer was complete. Hey, it's taking a little longer. Give me a few minutes.");
       done.actions=done.actions||actions.map(function(a){return a.name;});
       return done;
     } finally { try{ await reader.cancel(); } finally { reader.releaseLock(); } }
