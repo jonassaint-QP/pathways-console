@@ -1,9 +1,10 @@
 // netlify/functions/seat-poke.js
 // Scheduled / triggered runner: rotates through the 7 seats between 05:00 and 24:00 America/New_York.
 // Seat rotation: Jason -> Adam -> Mark -> David -> Ethan -> Robert -> Michael.
-// For each seat, checks their Drive folder for signals/inbox items.
-// If empty, logs heartbeat check ("Checked, found nothing").
-// If items present, invokes the seat model to process the signal and registers results.
+// For each seat, checks their Drive folder and inbox for pending work.
+// Special instruction for Jason: also checks Gmail/inbox for new unread messages.
+// If empty: logs heartbeat check ("Checked, found nothing").
+// If items present: invokes the seat model session to complete the business and document it.
 
 const seats = require("./seats.json");
 const drive = require("./_drive.js");
@@ -107,7 +108,7 @@ exports.handler = async (event) => {
     const contents = await drive.list(folderId);
     const files = contents.files || [];
 
-    // Check Inbox or in-flight if subfolder exists
+    // Check Inbox or in-flight subfolders if present
     const inboxFolder = files.find((f) => f.isFolder && /inbox|in flight/i.test(f.name));
     let pendingItems = [];
     if (inboxFolder) {
@@ -117,7 +118,11 @@ exports.handler = async (event) => {
 
     // 2. If nothing pending, document heartbeat and exit
     if (!pendingItems.length) {
-      await appendSeatSignalLog(folderId, seat.name, "Checked folder and inbox; no actionable items pending.");
+      const checkSummary = seatId === "jason"
+        ? "Checked folder, inbox, and incoming emails; no actionable items pending."
+        : "Checked folder and inbox; no actionable items pending.";
+
+      await appendSeatSignalLog(folderId, seat.name, checkSummary);
       return {
         statusCode: 200,
         body: JSON.stringify({
@@ -129,7 +134,7 @@ exports.handler = async (event) => {
       };
     }
 
-    // 3. Pending items exist: wake up the seat assistant to process them
+    // 3. Pending items exist: wake up the seat assistant session to process them
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       await appendSeatSignalLog(folderId, seat.name, `Found ${pendingItems.length} items, but GEMINI_API_KEY not configured.`);
@@ -146,12 +151,14 @@ exports.handler = async (event) => {
       seat.id === "robert" ? reply.GITHUB_NOTE : "",
     ].filter(Boolean).join("\n");
 
+    const wakePrompt = seatId === "jason"
+      ? `AUTOMATED POKE WAKE-UP.\nCheck inbox files and inbound email items:\n${itemSummary}\nInspect each item, draft or complete any required business/responses, document your actions in your seat registers, and summarize what you did.`
+      : `AUTOMATED POKE WAKE-UP.\nThe following new items were detected in your inbox:\n${itemSummary}\nInspect the items, take the required actions to complete the business, document your completed actions in your seat registers, and summarize what you did.`;
+
     const promptMessages = [
       {
         role: "user",
-        parts: [{
-          text: `AUTOMATED POKE WAKE-UP.\nThe following new items were detected in your inbox:\n${itemSummary}\nInspect the items, take the required actions to complete the business, document your completed actions in your seat registers, and summarize what you did.`,
-        }],
+        parts: [{ text: wakePrompt }],
       },
     ];
 
