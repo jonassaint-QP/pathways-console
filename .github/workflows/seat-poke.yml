@@ -1,0 +1,27 @@
+name: Seat Poke Rotation
+
+on:
+  schedule:
+    # Runs every 5 minutes (standard GitHub cron frequency)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  poke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poke Console Seats
+        run: |
+          POKE_URL="https://queerpathways.info/.netlify/functions/seat-poke"
+          echo "Poking seat rotation at $POKE_URL..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$POKE_URL" \
+            -H "Content-Type: application/json" \
+            ${{ secrets.POKE_SECRET && format('-H "Authorization: Bearer {0}"', secrets.POKE_SECRET) || '' }})
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response Body: $BODY"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "Poke returned error status: $HTTP_CODE"
+            exit 1
+          fi
