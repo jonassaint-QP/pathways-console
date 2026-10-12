@@ -159,7 +159,7 @@ async function* replyStream({ key, seat, contents, folderId, controller, timer, 
     console.error("chat stream failed", err);
     yield line({
       type: "error",
-      message: err.name === "AbortError" ? "That took too long. The answer is incomplete." : err.message,
+      message: err.name === "AbortError" ? "Hey, it's taking a little longer. Give me a few minutes." : err.message,
     });
   } finally {
     clearTimeout(timer);
@@ -217,22 +217,6 @@ async function diag(key, model) {
     } catch { /* the raw body above is the finding */ }
   } catch (e) {
     out.list_error = scrub(e && e.message);
-  }
-
-  try {
-    const one = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "say ok" }] }] }),
-      }
-    );
-    out.model_status = one.status;
-    out.model_body = scrub(await one.text());
-    out.model_tried = model;
-  } catch (e) {
-    out.model_error = scrub(e && e.message);
   }
 
   return json(200, out);
