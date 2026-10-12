@@ -45,8 +45,8 @@ function getActiveSeat(date = new Date()) {
 
 async function appendSeatSignalLog(folderId, seatName, message) {
   try {
-    const list = await drive.list(folderId);
-    let signalFile = (list.files || []).find((f) =>
+    const list = await drive.listFolder(folderId);
+    let signalFile = list.find((f) =>
       /signal[-_ ]register/i.test(f.name) || /heartbeat/i.test(f.name)
     );
 
@@ -60,12 +60,13 @@ async function appendSeatSignalLog(folderId, seatName, message) {
 
     if (signalFile && !signalFile.isFolder) {
       if (signalFile.mimeType === "application/vnd.google-apps.document") {
-        const currentText = await drive.readDoc(signalFile.id);
+        const current = await drive.readFile(signalFile.id);
+        const currentText = current.encoding === "utf8" ? current.text : "";
         await drive.updateDoc(signalFile.id, (currentText || "") + logEntry);
       }
     } else {
       // Create Heartbeat Register file if not present
-      await drive.createDoc(folderId, `${seatName} Heartbeat Register`, `# ${seatName} Heartbeat Log\n${logEntry}`);
+      await drive.createDoc(`${seatName} Heartbeat Register`, `# ${seatName} Heartbeat Log\n${logEntry}`, folderId);
     }
   } catch (err) {
     console.error(`Failed to write signal log for ${seatName}:`, err.message);
@@ -105,15 +106,14 @@ exports.handler = async (event) => {
 
   try {
     // 1. Inspect seat folder
-    const contents = await drive.list(folderId);
-    const files = contents.files || [];
+    const files = await drive.listFolder(folderId);
 
     // Check Inbox or in-flight subfolders if present
     const inboxFolder = files.find((f) => f.isFolder && /inbox|in flight/i.test(f.name));
     let pendingItems = [];
     if (inboxFolder) {
-      const inboxContents = await drive.list(inboxFolder.id);
-      pendingItems = (inboxContents.files || []).filter((f) => !f.isFolder);
+      const inboxContents = await drive.listFolder(inboxFolder.id);
+      pendingItems = inboxContents.filter((f) => !f.isFolder);
     }
 
     // 2. If nothing pending, document heartbeat and exit
@@ -185,3 +185,7 @@ exports.handler = async (event) => {
     };
   }
 };
+
+// Exposed for direct testing: exercising the heartbeat-log write without needing to fake
+// the 2-minute rotation slot and the Eastern operating-hours window the handler gates on.
+exports.appendSeatSignalLog = appendSeatSignalLog;
