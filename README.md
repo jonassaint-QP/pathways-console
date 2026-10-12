@@ -115,10 +115,14 @@ return JSON. Netlify's streaming wrapper awaits the entire response pipeline, in
 the final event; the Lambda context does not wait for unrelated open sockets. The browser saves an answer
 to the originating seat's in-memory thread only after receiving the final event and a clean end of stream.
 Interrupted or output-limited replies remain visible as incomplete and are not recorded as complete exchanges.
-Streaming remains subject to the deployed site's function execution limits; the model request has a
-45-second application timeout. Netlify's [Lambda streaming documentation](https://docs.netlify.com/build/functions/lambda-compatibility/#response-streaming)
-lists a 10-second streaming limit. The context flag cannot extend a platform timeout; confirm the site's
-effective limit before relying on longer answers. Local checks cannot verify the deployed Netlify proxy's behavior.
+
+**The site is on Netlify's Pro plan, which hard-kills a function at 26 seconds of execution** — streaming or
+not, with no signal to the client when it happens mid-stream. `chat.js`'s own `TIMEOUT_MS` (22 seconds by
+default, overridable with the `CHAT_TIMEOUT_MS` environment variable) is kept safely under that ceiling, so
+the app's own abort always fires first and flushes a proper `error` event before the platform can silently
+cut the connection. **If this site ever drops back to the Free/Starter plan** (whose ceiling is roughly 10
+seconds), lower `CHAT_TIMEOUT_MS` to match — see Netlify's [Lambda streaming documentation](https://docs.netlify.com/build/functions/lambda-compatibility/#response-streaming)
+for the current limit on whatever plan the site is on at the time.
 
 **This does NOT apply to the public widget.** `assistant.js` still stores nothing, by design. **The privacy promise
 belongs to the stranger, not to the operator.** The console records because it is private and yours; the widget
