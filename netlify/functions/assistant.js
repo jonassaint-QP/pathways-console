@@ -5,7 +5,8 @@
 // That way the route exists and can be tested, and it cannot answer a stranger by accident.
 const { BRIEF, CONFIG } = require("./assistant-brief.js");
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "claude-sonnet-4-5";
+const ANTHROPIC_VERSION = "2023-06-01";
 const TIMEOUT_MS = 20000;
 const MAX_INPUT = 1200;
 const MAX_TURNS = 12;
@@ -17,7 +18,7 @@ exports.handler = async (event) => {
       message: "The assistant is not switched on.",
     });
   }
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return json(503, { error: "assistant_unavailable", message: "The assistant is not configured." });
   if (event.httpMethod !== "POST") return json(405, { error: "method_not_allowed" });
 
@@ -28,11 +29,11 @@ exports.handler = async (event) => {
   if (!message) return json(400, { error: "empty_message" });
 
   const history = Array.isArray(body.history) ? body.history.slice(-MAX_TURNS) : [];
-  const contents = [
+  const messages = [
     ...history
       .filter((t) => t && typeof t.text === "string" && (t.role === "user" || t.role === "model"))
-      .map((t) => ({ role: t.role, parts: [{ text: String(t.text).slice(0, MAX_INPUT) }] })),
-    { role: "user", parts: [{ text: message }] },
+      .map((t) => ({ role: t.role === "model" ? "assistant" : "user", content: String(t.text).slice(0, MAX_INPUT) })),
+    { role: "user", content: message },
   ];
 
   const instruction = [
@@ -51,25 +52,32 @@ exports.handler = async (event) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${key}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        signal: controller.signal,
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: instruction }] },
-          contents,
-          generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
-        }),
-      }
-    );
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": ANTHROPIC_VERSION,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: MODEL,
+        system: instruction,
+        messages,
+        temperature: 0.4,
+        max_tokens: 1024,
+      }),
+    });
     if (!r.ok) {
       console.error("assistant upstream", r.status, (await r.text()).slice(0, 500));
       return json(502, { error: "assistant_unavailable", message: "Something went wrong. Please try booking instead." });
     }
     const data = await r.json();
-    const reply = (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("").trim();
+    const reply = (Array.isArray(data?.content) ? data.content : [])
+      .filter((p) => p && p.type === "text")
+      .map((p) => p.text || "")
+      .join("")
+      .trim();
     if (!reply) return json(502, { error: "empty_reply", message: "Something went wrong. Please try booking instead." });
     return json(200, { reply });
   } catch (err) {

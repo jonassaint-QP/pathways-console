@@ -2,8 +2,9 @@
 
 **One site. Two front doors. One key.**
 
-The console (private, seven seats) and the website assistant (public, one brief) both run as Netlify
-Functions on the same site, reading the same `GEMINI_API_KEY`.
+The console (private, seven seats) and the website assistant (public, one brief) run as Netlify Functions
+on the same site. The console (`chat.js`) and image generation (`visual.js`) read `GEMINI_API_KEY`. The
+public widget (`assistant.js`) reads `ANTHROPIC_API_KEY` and runs on Claude instead.
 
 ---
 
@@ -30,7 +31,9 @@ Functions on the same site, reading the same `GEMINI_API_KEY`.
    - Publish directory: **`public`**
    - Functions directory: **`netlify/functions`** — set in `netlify.toml` already
 2. **Environment variables on that site:**
-   - `GEMINI_API_KEY` — **already present in the existing project.** If this is a *new* site, add it there.
+   - `GEMINI_API_KEY` — powers the console (`chat.js`) and image generation (`visual.js`). **Already
+     present in the existing project.** If this is a *new* site, add it there.
+   - `ANTHROPIC_API_KEY` — powers the public widget (`assistant.js`) only, which runs on Claude.
    - `ASSISTANT_ENABLED` — **leave unset.** The public widget refuses until this is `"true"`.
 3. **Deploy.** The console is at the site root.
 
@@ -126,8 +129,8 @@ records nothing because it meets people who did not ask to be kept.
 ## What was verified, and what was not
 
 **Verified by running the logic locally:** the server boots, the seven seats load and serve, the console renders,
-and both API routes fail closed and loudly — **503 with "No GEMINI_API_KEY set on the host"** when the key is
-absent, and the assistant refusing with "not switched on" regardless.
+and both API routes fail closed and loudly — **503 with "No GEMINI_API_KEY set on the host"** for the console
+when its key is absent, and the assistant refusing with "not switched on" regardless.
 
 **Not verified: the model call itself**, because no key is reachable from the build seat. **That is the only
 unverified piece, and it is unverified for one reason.**
