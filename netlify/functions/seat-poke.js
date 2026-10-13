@@ -135,9 +135,9 @@ exports.handler = async (event) => {
     }
 
     // 3. Pending items exist: wake up the seat assistant session to process them
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.CLAUDE_API_KEY;
     if (!apiKey) {
-      await appendSeatSignalLog(folderId, seat.name, `Found ${pendingItems.length} items, but GEMINI_API_KEY not configured.`);
+      await appendSeatSignalLog(folderId, seat.name, `Found ${pendingItems.length} items, but CLAUDE_API_KEY not configured.`);
       return { statusCode: 200, body: JSON.stringify({ status: "skipped_no_key", seat: seatId }) };
     }
 
@@ -158,7 +158,7 @@ exports.handler = async (event) => {
     const promptMessages = [
       {
         role: "user",
-        parts: [{ text: wakePrompt }],
+        content: [{ type: "text", text: wakePrompt }],
       },
     ];
 

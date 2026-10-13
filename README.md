@@ -3,8 +3,9 @@
 **One site. Two front doors. One key.**
 
 The console (private, seven seats) and the website assistant (public, one brief) run as Netlify Functions
-on the same site. The console (`chat.js`) and image generation (`visual.js`) read `GEMINI_API_KEY`. The
-public widget (`assistant.js`) reads `CLAUDE_API_KEY` and runs on Claude instead.
+on the same site, both on Claude. The console (`chat.js`) and the public widget (`assistant.js`) read
+`CLAUDE_API_KEY`. Image generation (`visual.js`) is the one exception: it still calls Google Gemini, and
+reads `GEMINI_API_KEY`.
 
 ---
 
@@ -31,9 +32,10 @@ public widget (`assistant.js`) reads `CLAUDE_API_KEY` and runs on Claude instead
    - Publish directory: **`public`**
    - Functions directory: **`netlify/functions`** — set in `netlify.toml` already
 2. **Environment variables on that site:**
-   - `GEMINI_API_KEY` — powers the console (`chat.js`) and image generation (`visual.js`). **Already
-     present in the existing project.** If this is a *new* site, add it there.
-   - `CLAUDE_API_KEY` — powers the public widget (`assistant.js`) only, which runs on Claude.
+   - `CLAUDE_API_KEY` — powers the console (`chat.js`), the seat-poke rotation (`seat-poke.js`), and
+     the public widget (`assistant.js`). **Already present in the existing project.** If this is a
+     *new* site, add it there.
+   - `GEMINI_API_KEY` — powers image generation only (`visual.js`). Still required for that one route.
    - `ASSISTANT_ENABLED` — **leave unset.** The public widget refuses until this is `"true"`.
 3. **Deploy.** The console is at the site root.
 
@@ -108,13 +110,16 @@ either seat or Adam can be viewed and copied out.
 **A write failure never blocks a reply.** If the record cannot be written, the answer still comes back and the
 failure is logged and shown in the console — a lost write should not look like a failed conversation.
 
-**Console answers stream as they arrive.** The model uses temperature `0.7` and a maximum of `8192` output
-tokens. `/api/chat` emits newline-delimited JSON: `delta` events contain text, `done` contains the full
+**Console answers stream as they arrive.** The model (`claude-haiku-4-5`) runs with a small extended-thinking
+budget (1024 tokens) and a maximum of `8192` output tokens. `/api/chat` emits newline-delimited JSON: `delta`
+events contain text, `tool` events report a Drive/GitHub/Netlify action in progress, `done` contains the full
 `reply` and `recorded` keys, and `error` reports an incomplete answer. HTTP errors before streaming still
 return JSON. Netlify's streaming wrapper awaits the entire response pipeline, including record writes and
 the final event; the Lambda context does not wait for unrelated open sockets. The browser saves an answer
 to the originating seat's in-memory thread only after receiving the final event and a clean end of stream.
 Interrupted or output-limited replies remain visible as incomplete and are not recorded as complete exchanges.
+When the deadline is close, the pipeline stops requesting further actions and spends what time is left asking
+the model to summarize whatever it already found, rather than discarding a whole search's progress.
 
 **The site is on Netlify's Pro plan, which hard-kills a function at 26 seconds of execution** — streaming or
 not, with no signal to the client when it happens mid-stream. `chat.js`'s own `TIMEOUT_MS` (22 seconds by
@@ -133,7 +138,7 @@ records nothing because it meets people who did not ask to be kept.
 ## What was verified, and what was not
 
 **Verified by running the logic locally:** the server boots, the seven seats load and serve, the console renders,
-and both API routes fail closed and loudly — **503 with "No GEMINI_API_KEY set on the host"** for the console
+and both API routes fail closed and loudly — **503 with "No CLAUDE_API_KEY set on the host"** for the console
 when its key is absent, and the assistant refusing with "not switched on" regardless.
 
 **Not verified: the model call itself**, because no key is reachable from the build seat. **That is the only

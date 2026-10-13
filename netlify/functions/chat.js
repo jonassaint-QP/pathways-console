@@ -29,9 +29,9 @@ exports.handler = stream(async (event, context) => {
 
   context.callbackWaitsForEmptyEventLoop = false;
   initBlobs(event);
-  const key = process.env.GEMINI_API_KEY;
+  const key = process.env.CLAUDE_API_KEY;
   if (!key) {
-    return reply.json(503, { error: "no_key", message: "No GEMINI_API_KEY set on the host." });
+    return reply.json(503, { error: "no_key", message: "No CLAUDE_API_KEY set on the host." });
   }
 
   // GET /api/chat?diag=1 -> what this key can actually reach. The key is scrubbed from the reply.
@@ -57,7 +57,10 @@ exports.handler = stream(async (event, context) => {
   const history = Array.isArray(body.messages) ? body.messages.slice(-MAX_TURNS) : [];
   const contents = history
     .filter((m) => m && typeof m.text === "string" && (m.role === "user" || m.role === "model"))
-    .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, MAX_INPUT) }] }));
+    .map((m) => ({
+      role: m.role === "model" ? "assistant" : "user",
+      content: [{ type: "text", text: String(m.text).slice(0, MAX_INPUT) }],
+    }));
 
   if (!contents.length) return reply.json(400, { error: "empty" });
 
@@ -84,9 +87,10 @@ exports.handler = stream(async (event, context) => {
         upstream_status: first.status,
         message: "The model call failed.",
         hint:
-          first.status === 403 ? "The key was refused. Check its application restrictions and that the Generative Language API is enabled."
-          : first.status === 400 ? "The key was rejected as invalid."
+          first.status === 401 ? "The key was rejected as invalid."
+          : first.status === 403 ? "The key was refused. Check that it is permitted to reach the model."
           : first.status === 404 ? "The model is not available to this key."
+          : first.status === 429 ? "Rate limited. Slow down the request rate or raise the plan's limit."
           : "See the function log for the body.",
       });
     }

@@ -34,7 +34,7 @@ function loadChat(options = {}) {
       };
       return require(name);
     },
-    process: { env: { GEMINI_API_KEY: "synthetic-test-key", ...(options.env || {}) } },
+    process: { env: { CLAUDE_API_KEY: "synthetic-test-key", ...(options.env || {}) } },
     console: { error: (...args) => logs.push(args) },
     AbortController, TextDecoder, setTimeout, clearTimeout,
     fetch: async (url, init) => {
@@ -61,12 +61,41 @@ function loadChat(options = {}) {
   return { handler: context.exports.handler, calls, records, logs };
 }
 
-function sse(parts, finishReason = "STOP") {
-  return parts.map((text) => "data: " + JSON.stringify({
-    candidates: [{ content: { parts: [{ text }] } }],
-  }) + "\r\n\r\n").join("") + "data: " + JSON.stringify({
-    candidates: [{ finishReason }],
-  }) + "\r\n\r\n";
+function sseEvent(type, data) {
+  return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+// A minimal, valid Claude stream for a plain multi-chunk text answer.
+function sse(textParts, stopReason = "end_turn") {
+  let out = sseEvent("message_start", { type: "message_start", message: { id: "msg_1", role: "assistant", content: [] } });
+  out += sseEvent("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+  for (const text of textParts) {
+    out += sseEvent("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } });
+  }
+  out += sseEvent("content_block_stop", { type: "content_block_stop", index: 0 });
+  out += sseEvent("message_delta", { type: "message_delta", delta: { stop_reason: stopReason }, usage: {} });
+  out += sseEvent("message_stop", { type: "message_stop" });
+  return out;
+}
+
+// A stream where the assistant requests exactly one tool call, optionally preceded by a
+// thinking block, to exercise the signature-preservation requirement.
+function toolUseSSE(name, input, { thinking } = {}) {
+  let out = sseEvent("message_start", { type: "message_start", message: { id: "msg_2", role: "assistant", content: [] } });
+  let index = 0;
+  if (thinking) {
+    out += sseEvent("content_block_start", { type: "content_block_start", index, content_block: { type: "thinking", thinking: "" } });
+    out += sseEvent("content_block_delta", { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: thinking.text } });
+    out += sseEvent("content_block_delta", { type: "content_block_delta", index, delta: { type: "signature_delta", signature: thinking.signature } });
+    out += sseEvent("content_block_stop", { type: "content_block_stop", index });
+    index++;
+  }
+  out += sseEvent("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: "toolu_1", name } });
+  out += sseEvent("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } });
+  out += sseEvent("content_block_stop", { type: "content_block_stop", index });
+  out += sseEvent("message_delta", { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: {} });
+  out += sseEvent("message_stop", { type: "message_stop" });
+  return out;
 }
 
 function response(text, size = 1) {
@@ -99,10 +128,12 @@ test("streams split UTF-8 events, records the whole answer and completes the pip
   assert.equal(events[2].reply, "Hello 🌈 world");
   assert.equal(chat.records[0][2], events[2].reply);
   assert.equal(output.context.callbackWaitsForEmptyEventLoop, false);
-  assert.match(chat.calls[0].url, /:streamGenerateContent\?alt=sse&key=/);
-  assert.deepEqual(JSON.parse(chat.calls[0].init.body).generationConfig, {
-    temperature: 0.7, maxOutputTokens: 8192, thinkingConfig: { thinkingLevel: "LOW" },
-  });
+  assert.match(chat.calls[0].url, /api\.anthropic\.com\/v1\/messages/);
+  const payload = JSON.parse(chat.calls[0].init.body);
+  assert.equal(payload.max_tokens, 8192);
+  assert.deepEqual(payload.thinking, { type: "enabled", budget_tokens: 1024 });
+  assert.equal(payload.temperature, undefined); // forced to the API default whenever thinking is on
+  assert.equal(payload.stream, true);
   const clientResponse = response(output.text);
   clientResponse.headers.set("content-type", "application/x-ndjson");
   const seen = [];
@@ -142,7 +173,9 @@ test("auth denial and upstream failure remain JSON HTTP errors", async () => {
 });
 
 test("incomplete, malformed and output-limited model streams never record or complete", async () => {
-  for (const text of [sse(["Partial"], "MAX_TOKENS"), sse(["Partial"], "SAFETY"), "data: {bad}\n\n", 'data: {"candidates":[]}']) {
+  const emptyStream = sseEvent("message_start", { type: "message_start", message: {} }) + sseEvent("message_stop", { type: "message_stop" });
+  const errorEvent = sseEvent("error", { type: "error", error: { type: "overloaded_error", message: "Overloaded" } });
+  for (const text of [sse(["Partial"], "max_tokens"), sse(["Partial"], "refusal"), errorEvent, emptyStream]) {
     const chat = loadChat({ upstream: response(text) });
     const result = await run(chat);
     const events = result.text.trim().split("\n").map(JSON.parse);
@@ -152,14 +185,9 @@ test("incomplete, malformed and output-limited model streams never record or com
   }
 });
 
-test("Robert gets GitHub tools without a folder and tool rounds preserve thought signatures", async () => {
-  const toolPart = {
-    functionCall: { name: "github_get_file", args: { repo: "QP-Store", path: "package.json" } },
-    thoughtSignature: "synthetic-signature",
-  };
-  const first = "data: " + JSON.stringify({
-    candidates: [{ content: { parts: [toolPart] }, finishReason: "STOP" }],
-  }) + "\n\n";
+test("Robert gets GitHub tools without a folder and tool rounds preserve thinking blocks", async () => {
+  const thinking = { text: "Let me check the file.", signature: "synthetic-signature" };
+  const first = toolUseSSE("github_get_file", { repo: "QP-Store", path: "package.json" }, { thinking });
   const executed = [];
   const chat = loadChat({
     upstream: [response(first), response(sse(["Read the file."]))],
@@ -169,22 +197,22 @@ test("Robert gets GitHub tools without a folder and tool rounds preserve thought
   assert.match(result.text, /"type":"tool","name":"github_get_file","ok":true/);
   const payloads = chat.calls.map((call) => JSON.parse(call.init.body));
   for (const payload of payloads) {
-    assert.deepEqual(payload.tools[0].functionDeclarations.map((tool) => tool.name),
+    assert.deepEqual(payload.tools.map((tool) => tool.name),
       [
         "github_get_file", "github_create_branch", "github_write_file", "github_open_pull_request",
         "github_list_pull_requests", "github_list_commits", "github_get_tree", "probe_url",
       ]);
   }
-  assert.deepEqual(payloads[1].contents[1].parts[0], toolPart);
+  // The assistant turn pushed back into history must carry the thinking block exactly as
+  // received, signature included - Claude refuses a tool-result turn otherwise.
+  assert.deepEqual(payloads[1].messages[1].content[0], { type: "thinking", thinking: thinking.text, signature: thinking.signature });
+  assert.equal(payloads[1].messages[1].content[1].type, "tool_use");
   assert.equal(executed[0][0].id, "robert");
   assert.equal(executed[0][1], "");
 });
 
 test("a run close to the deadline wraps up with a summary instead of hard-aborting", async () => {
-  const toolPart = { functionCall: { name: "list_folder", args: {} } };
-  const first = "data: " + JSON.stringify({
-    candidates: [{ content: { parts: [toolPart] }, finishReason: "STOP" }],
-  }) + "\n\n";
+  const first = toolUseSSE("list_folder", {});
   // CHAT_TIMEOUT_MS=1 means the deadline has already effectively passed by the time the
   // first tool round finishes executing, forcing the wrap-up branch deterministically.
   const chat = loadChat({
@@ -205,8 +233,9 @@ test("a run close to the deadline wraps up with a summary instead of hard-aborti
   // model cannot keep searching and is pushed to answer from what it already has.
   const wrapUpPayload = JSON.parse(chat.calls[1].init.body);
   assert.equal(wrapUpPayload.tools, undefined);
-  assert.equal(wrapUpPayload.generationConfig.maxOutputTokens, 1024);
-  assert.match(wrapUpPayload.systemInstruction.parts[0].text, /YOU ARE NEARLY OUT OF TIME/);
+  assert.equal(wrapUpPayload.max_tokens, 2048);
+  assert.deepEqual(wrapUpPayload.thinking, { type: "enabled", budget_tokens: 1024 });
+  assert.match(wrapUpPayload.system, /YOU ARE NEARLY OUT OF TIME/);
 });
 
 test("folder tools and GitHub tools are composed only for the appropriate seat", async () => {
@@ -217,7 +246,7 @@ test("folder tools and GitHub tools are composed only for the appropriate seat",
     const chat = loadChat({ upstream: response(sse(["Hello"])) });
     await run(chat, { seatId, folderId });
     const payload = JSON.parse(chat.calls[0].init.body);
-    assert.equal(payload.tools?.[0].functionDeclarations.length || 0, count);
+    assert.equal(payload.tools?.length || 0, count);
   }
 });
 
@@ -245,8 +274,17 @@ test("upstream timeout and network errors are distinguished", async () => {
 });
 
 test("private model thoughts are not included in replies or records", async () => {
-  const text = 'data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"Private reasoning"},{"text":"Answer"}]},"finishReason":"STOP"}]}\n\n';
-  const chat = loadChat({ upstream: response(text) });
+  let out = sseEvent("message_start", { type: "message_start", message: {} });
+  out += sseEvent("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } });
+  out += sseEvent("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Private reasoning" } });
+  out += sseEvent("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } });
+  out += sseEvent("content_block_stop", { type: "content_block_stop", index: 0 });
+  out += sseEvent("content_block_start", { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } });
+  out += sseEvent("content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Answer" } });
+  out += sseEvent("content_block_stop", { type: "content_block_stop", index: 1 });
+  out += sseEvent("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} });
+  out += sseEvent("message_stop", { type: "message_stop" });
+  const chat = loadChat({ upstream: response(out) });
   const result = await run(chat);
   assert.doesNotMatch(result.text, /Private reasoning/);
   assert.equal(chat.records[0][2], "Answer");
