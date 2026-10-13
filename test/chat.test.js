@@ -162,6 +162,24 @@ test("completion waits for record writes, rather than ending at handler return",
   assert.equal(output.writableEnded, true);
 });
 
+test("consecutive same-role turns from a client thread are merged, not sent to Claude as-is", async () => {
+  // Simulates a thread where two sends in a row failed before a reply was ever recorded (the
+  // client only appends a successful assistant turn), leaving two consecutive user turns -
+  // a shape Claude rejects outright with "roles must alternate", unlike Gemini.
+  const chat = loadChat({ upstream: response(sse(["Hi"])) });
+  await run(chat, {
+    messages: [
+      { role: "user", text: "first attempt" },
+      { role: "user", text: "retry after failure" },
+      { role: "model", text: "Got it." },
+      { role: "user", text: "one more thing" },
+    ],
+  });
+  const payload = JSON.parse(chat.calls[0].init.body);
+  assert.deepEqual(payload.messages.map((m) => m.role), ["user", "assistant", "user"]);
+  assert.deepEqual(payload.messages[0].content.map((c) => c.text), ["first attempt", "retry after failure"]);
+});
+
 test("auth denial and upstream failure remain JSON HTTP errors", async () => {
   const denied = loadChat({ denied: { statusCode: 401, body: '{"error":"unauthorized"}' } });
   assert.equal((await run(denied)).metadata.statusCode, 401);

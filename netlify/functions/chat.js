@@ -23,6 +23,22 @@ const TIMEOUT_MS = Number(process.env.CHAT_TIMEOUT_MS) || 22000;
 const MAX_INPUT = 4000;
 const MAX_TURNS = 24;
 
+// Claude rejects any request whose messages do not strictly alternate user/assistant/user/...,
+// starting with user - unlike Gemini, which tolerated consecutive same-role turns. A client
+// thread can end up with consecutive user turns after a failed reply (the browser only ever
+// appends a *successful* assistant turn to its history), so this merges those back into a
+// single turn rather than trusting the client to never produce that shape.
+function alternateRoles(messages) {
+  const merged = [];
+  for (const m of messages) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role) last.content = last.content.concat(m.content);
+    else merged.push({ role: m.role, content: m.content.slice() });
+  }
+  while (merged.length && merged[0].role !== "user") merged.shift();
+  return merged;
+}
+
 exports.handler = stream(async (event, context) => {
   const denied = guard(event);
   if (denied) return denied;
@@ -55,12 +71,12 @@ exports.handler = stream(async (event, context) => {
   }
 
   const history = Array.isArray(body.messages) ? body.messages.slice(-MAX_TURNS) : [];
-  const contents = history
+  const contents = alternateRoles(history
     .filter((m) => m && typeof m.text === "string" && (m.role === "user" || m.role === "model"))
     .map((m) => ({
       role: m.role === "model" ? "assistant" : "user",
       content: [{ type: "text", text: String(m.text).slice(0, MAX_INPUT) }],
-    }));
+    })));
 
   if (!contents.length) return reply.json(400, { error: "empty" });
 
