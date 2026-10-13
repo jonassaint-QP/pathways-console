@@ -303,3 +303,13 @@ test("client rejects missing final chunks, mismatched completion and stream erro
     await assert.rejects(readChatStream(r, () => {}));
   }
 });
+
+test("client surfaces the hint and upstream status for a failed chat request, not just the generic message", async () => {
+  const r = new Response(JSON.stringify({
+    error: "upstream", upstream_status: 401, message: "The model call failed.", hint: "The key was rejected as invalid.",
+  }), { status: 502 });
+  await assert.rejects(
+    readChatStream(r, () => {}),
+    /The model call failed\.\s*—\s*The key was rejected as invalid\.\s*\[upstream status 401\]/
+  );
+});

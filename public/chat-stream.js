@@ -25,7 +25,15 @@
   // Tool events are progress, not answer text: collected and reported, never added to the
   // reply, so the final-event comparison stays like for like.
   async function readChatStream(response,onDelta,onTool){
-    if(!response.ok){ var e=await response.json(); throw new Error(e.message||("The chat request failed ("+response.status+").")); }
+    if(!response.ok){
+      var e=await response.json();
+      var msg=e.message||("The chat request failed ("+response.status+").");
+      // Surfaced so an upstream failure is diagnosable from the chat bubble itself, with no
+      // need to open the browser's developer tools to read the raw response body.
+      if(e.hint) msg+=" — "+e.hint;
+      if(e.upstream_status!=null) msg+=" [upstream status "+e.upstream_status+"]";
+      throw new Error(msg);
+    }
     if(!response.body||!/^application\/x-ndjson\b/i.test(response.headers.get("content-type")||"")) throw new Error("The server did not return a chat stream.");
     var reader=response.body.getReader(), dec=new TextDecoder(), buf="", reply="", done=null, actions=[];
     function take(line){
