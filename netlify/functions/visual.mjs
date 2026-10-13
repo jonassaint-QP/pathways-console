@@ -13,9 +13,11 @@
 //
 // The rendered image is written to the seat's record store AND to Adam's compliance
 // record as a URL, so the two-copy floor covers visuals exactly as it covers text.
-const seats = require("./seats.json");
-const { record, initBlobs } = require("./_record.js");
-const { guard } = require("./_auth.js");
+import seats from "./seats.json";
+import recordLib from "./_record.js";
+const { record, initBlobs } = recordLib;
+import auth from "./_auth.js";
+const { guard } = auth;
 
 // The estate's image model. gemini-3-pro-image is the highest-fidelity image model this
 // key can reach; the flash variant is the cheaper fallback. Both were confirmed present
@@ -25,7 +27,7 @@ const FALLBACK_MODEL = "gemini-3.1-flash-image";
 const TIMEOUT_MS = 90000;
 const MAX_PROMPT = 4000;
 
-exports.handler = async (event) => {
+const handler = async (event) => {
   const denied = guard(event);
   if (denied) return denied;
 
@@ -82,6 +84,20 @@ exports.handler = async (event) => {
     fallback_from: result.fallback_from || null,
     recorded,
   });
+};
+
+// v2 runtime: adapt the Request into the event shape the shared helpers read, and the
+// { statusCode, headers, body } result back into a Response.
+export default async (req) => {
+  const url = new URL(req.url);
+  const event = {
+    httpMethod: req.method,
+    headers: Object.fromEntries(req.headers),
+    queryStringParameters: Object.fromEntries(url.searchParams),
+    body: req.method === "GET" || req.method === "HEAD" ? "" : await req.text(),
+  };
+  const out = await handler(event);
+  return new Response(out.body, { status: out.statusCode, headers: out.headers });
 };
 
 // ---- the instruction the model receives ----
