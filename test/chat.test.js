@@ -101,7 +101,7 @@ test("streams split UTF-8 events, records the whole answer and completes the pip
   assert.equal(output.context.callbackWaitsForEmptyEventLoop, false);
   assert.match(chat.calls[0].url, /:streamGenerateContent\?alt=sse&key=/);
   assert.deepEqual(JSON.parse(chat.calls[0].init.body).generationConfig, {
-    temperature: 0.7, maxOutputTokens: 8192,
+    temperature: 0.7, maxOutputTokens: 8192, thinkingConfig: { thinkingLevel: "LOW" },
   });
   const clientResponse = response(output.text);
   clientResponse.headers.set("content-type", "application/x-ndjson");

@@ -55,7 +55,16 @@ async function callModel(key, model, instruction, contents, folderId, controller
   const payload = {
     systemInstruction: { parts: [{ text: instruction }] },
     contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: options.wrapUp ? 1024 : 8192 },
+    // LOW is the lightest reasoning depth gemini-3.8-flash supports (MINIMAL errors on this
+    // model). Left unset, the API defaults every call to MEDIUM, and that "thinking" time runs
+    // before any text or tool-call is emitted — it cannot be interrupted mid-generation the way
+    // a round boundary can, so it was the real floor under how fast any single call could be,
+    // independent of the deadline/wrap-up logic below.
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: options.wrapUp ? 1024 : 8192,
+      thinkingConfig: { thinkingLevel: "LOW" },
+    },
   };
   if (!options.noTools) {
     const declarations = seatTools.declarations(seat, folderId);
