@@ -31,6 +31,7 @@
       // Surfaced so an upstream failure is diagnosable from the chat bubble itself, with no
       // need to open the browser's developer tools to read the raw response body.
       if(e.hint) msg+=" — "+e.hint;
+      if(e.detail) msg+=" — "+e.detail;
       if(e.upstream_status!=null) msg+=" [upstream status "+e.upstream_status+"]";
       throw new Error(msg);
     }

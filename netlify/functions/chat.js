@@ -98,10 +98,18 @@ exports.handler = stream(async (event, context) => {
     if (!first.ok) {
       clearTimeout(timer);
       console.error("chat upstream", first.status, first.detail);
+      // Anthropic's error body is JSON ({error:{type,message}}); pull the message out so the
+      // operator sees the real reason directly in the chat bubble, with no log access needed.
+      let upstreamDetail = first.detail;
+      try {
+        const parsed = JSON.parse(first.detail);
+        if (parsed && parsed.error) upstreamDetail = `${parsed.error.type || "error"}: ${parsed.error.message || ""}`.trim();
+      } catch { /* not JSON; the raw text is still useful as-is */ }
       return reply.json(502, {
         error: "upstream",
         upstream_status: first.status,
         message: "The model call failed.",
+        detail: upstreamDetail,
         hint:
           first.status === 401 ? "The key was rejected as invalid."
           : first.status === 403 ? "The key was refused. Check that it is permitted to reach the model."

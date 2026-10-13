@@ -188,6 +188,15 @@ test("auth denial and upstream failure remain JSON HTTP errors", async () => {
   const result = await run(failed);
   assert.equal(result.metadata.statusCode, 502);
   assert.equal(JSON.parse(result.text).upstream_status, 403);
+  // A plain-text upstream body is kept as-is; it is not valid JSON to pull a message out of.
+  assert.equal(JSON.parse(result.text).detail, "upstream failure");
+});
+
+test("a structured Anthropic error body surfaces its real message as the detail, not raw JSON", async () => {
+  const body = JSON.stringify({ error: { type: "invalid_request_error", message: "roles must alternate" } });
+  const chat = loadChat({ upstream: new Response(body, { status: 400 }) });
+  const result = await run(chat);
+  assert.equal(JSON.parse(result.text).detail, "invalid_request_error: roles must alternate");
 });
 
 test("incomplete, malformed and output-limited model streams never record or complete", async () => {
@@ -322,12 +331,13 @@ test("client rejects missing final chunks, mismatched completion and stream erro
   }
 });
 
-test("client surfaces the hint and upstream status for a failed chat request, not just the generic message", async () => {
+test("client surfaces the hint, detail and upstream status for a failed chat request, not just the generic message", async () => {
   const r = new Response(JSON.stringify({
-    error: "upstream", upstream_status: 401, message: "The model call failed.", hint: "The key was rejected as invalid.",
+    error: "upstream", upstream_status: 400, message: "The model call failed.",
+    hint: "See the function log for the body.", detail: "invalid_request_error: roles must alternate",
   }), { status: 502 });
   await assert.rejects(
     readChatStream(r, () => {}),
-    /The model call failed\.\s*—\s*The key was rejected as invalid\.\s*\[upstream status 401\]/
+    /The model call failed\.\s*—\s*See the function log for the body\.\s*—\s*invalid_request_error: roles must alternate\s*\[upstream status 400\]/
   );
 });
