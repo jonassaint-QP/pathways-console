@@ -7,14 +7,14 @@
 //
 // Authenticated via INBOUND_EMAIL_SECRET bearer token or query parameter.
 
-const seats = require("./seats.json");
-const drive = require("./_drive.js");
-const reply = require("./_chat-reply.js");
+import seats from "./seats.json";
+import drive from "./_drive.js";
+import reply from "./_chat-reply.js";
 
 const JASON_INBOX_FOLDER_ID = "1bap6uw8l0E7Nb_ldYp87AI1Cmg-6I22V"; // 03 Seat Folders > Jason > 04 Inbox
 const JASON_SIGNAL_REG_ID = "163TdO6aOv1fl977gjPlZPm0gm3bwheMs2Km30NwkDlU"; // Jason 3, Signal Register
 
-exports.handler = async (event) => {
+const handler = async (event) => {
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -175,4 +175,18 @@ exports.handler = async (event) => {
       triageSummary: jasonResponse || "Email filed into Jason inbox.",
     }),
   };
+};
+
+// v2 runtime: adapt the Request into the event shape the shared helpers read, and the
+// { statusCode, headers, body } result back into a Response.
+export default async (req) => {
+  const url = new URL(req.url);
+  const event = {
+    httpMethod: req.method,
+    headers: Object.fromEntries(req.headers),
+    queryStringParameters: Object.fromEntries(url.searchParams),
+    body: req.method === "GET" || req.method === "HEAD" ? "" : await req.text(),
+  };
+  const out = await handler(event);
+  return new Response(out.body, { status: out.statusCode, headers: out.headers });
 };
