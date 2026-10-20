@@ -163,20 +163,57 @@ exports.handler = async (event) => {
     ];
 
     const controller = new AbortController();
-    const res = await reply.callModel(apiKey, reply.MODEL, instruction, promptMessages, folderId, controller, seat);
+    const timeoutMs = Number(process.env.CHAT_TIMEOUT_MS) || 22000;
+    const deadline = Date.now() + timeoutMs;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    await appendSeatSignalLog(folderId, seat.name, `Processed ${pendingItems.length} pending items via poke run.`);
+    try {
+      const modelResult = await reply.callModel(apiKey, reply.MODEL, instruction, promptMessages, folderId, controller, seat);
+      if (!modelResult.ok) {
+        throw new Error(`The model call failed (${modelResult.status}): ${modelResult.detail || "no detail"}`);
+      }
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        status: "processed",
-        seat: seatId,
-        slot,
-        itemsCount: pendingItems.length,
-        responseStatus: res.status,
-      }),
-    };
+      let completion = null;
+      for await (const chunk of reply.replyStream({
+        key: apiKey,
+        seat,
+        contents: promptMessages,
+        folderId,
+        controller,
+        timer,
+        deadline,
+        res: modelResult.res,
+        instruction,
+        record: async () => {},
+      })) {
+        for (const line of chunk.split("\n")) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+          if (event.type === "error") throw new Error(event.message || "The model stream failed.");
+          if (event.type === "done") completion = event;
+        }
+      }
+
+      if (!completion) throw new Error("The model stream ended without a completed response.");
+
+      await appendSeatSignalLog(folderId, seat.name, `Processed ${pendingItems.length} pending items via poke run.`);
+
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          status: "processed",
+          seat: seatId,
+          slot,
+          itemsCount: pendingItems.length,
+          responseStatus: modelResult.res.status,
+          triageSummary: completion.reply,
+          actions: completion.actions,
+        }),
+      };
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
   } catch (err) {
     console.error(`Seat poke error for ${seatId}:`, err);
     return {
